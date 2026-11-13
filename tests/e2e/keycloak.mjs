@@ -89,35 +89,38 @@ try {
       },
     });
   desktop = await launch();
-  await desktop.evaluate(({ shell, app }) => {
-    app.setPath(
-      'userData',
-      process.argv
-        .find((arg) => arg.startsWith('--user-data-dir='))
-        ?.split('=')
-        .slice(1)
-        .join('=') ?? app.getPath('userData'),
-    );
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (url, options) => {
-      const target = new URL(url instanceof Request ? url.url : url);
-      if (
-        globalThis.struchkaiTestOffline &&
-        target.origin === 'http://127.0.0.1:8081' &&
-        target.pathname.endsWith('/token')
-      )
-        return Promise.reject(new TypeError('Fallo de red controlado'));
-      if (
-        new URL(url).origin === 'http://127.0.0.1:43100' &&
-        options?.headers?.Authorization
-      )
-        globalThis.struchkaiTestBearer = options.headers.Authorization;
-      return originalFetch(url, options);
-    };
-    shell.openExternal = async (url) => {
-      globalThis.struchkaiTestUrl = url;
-    };
-  });
+  const interceptBrowser = async () => {
+    await desktop.evaluate(({ shell, app }) => {
+      app.setPath(
+        'userData',
+        process.argv
+          .find((arg) => arg.startsWith('--user-data-dir='))
+          ?.split('=')
+          .slice(1)
+          .join('=') ?? app.getPath('userData'),
+      );
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (url, options) => {
+        const target = new URL(url instanceof Request ? url.url : url);
+        if (
+          globalThis.struchkaiTestOffline &&
+          target.origin === 'http://127.0.0.1:8081' &&
+          target.pathname.endsWith('/token')
+        )
+          return Promise.reject(new TypeError('Fallo de red controlado'));
+        if (
+          new URL(url).origin === 'http://127.0.0.1:43100' &&
+          options?.headers?.Authorization
+        )
+          globalThis.struchkaiTestBearer = options.headers.Authorization;
+        return originalFetch(url, options);
+      };
+      shell.openExternal = async (url) => {
+        globalThis.struchkaiTestUrl = url;
+      };
+    });
+  };
+  await interceptBrowser();
   let window = await desktop.firstWindow();
   assert.equal(
     await window.evaluate(() =>
@@ -431,6 +434,7 @@ try {
   );
   await desktop.close();
   desktop = await launch();
+  await interceptBrowser();
   window = await desktop.firstWindow();
   await window.getByText(email, { exact: true }).waitFor({ timeout: 15000 });
   await window.getByRole('button', { name: 'Sesiones activas' }).click();
@@ -462,6 +466,7 @@ try {
   );
   await desktop.close();
   desktop = await launch();
+  await interceptBrowser();
   window = await desktop.firstWindow();
   await window
     .getByRole('button', { name: 'Iniciar sesión', exact: true })
@@ -493,6 +498,47 @@ try {
       0,
     );
     console.info('Segundo uso del enlace de recuperación rechazado');
+    if (process.env.STRUCHKAI_TEST_SHORT_LINK === 'true') {
+      const before = mails.length;
+      await open('Recuperar acceso');
+      await page.locator('a[href*="reset-credentials"]').click();
+      await page.locator('[name=username]').fill(email);
+      await page.locator('form [type=submit]').first().click();
+      const fresh = await wait(
+        () => mails.slice(before).find((mail) => mail.to === email),
+        'segundo correo de recuperación',
+      );
+      const href = fresh.text.match(
+        /https?:\/\/[^\s<>]+\/login-actions\/action-token\?[^\s<>]+/,
+      )?.[0];
+      assert.ok(href);
+      const expiring = new URL(href);
+      assert.equal(expiring.origin, new URL(issuer).origin);
+      const encoded = expiring.searchParams.get('key')?.split('.')[1];
+      assert.ok(encoded);
+      const { exp } = JSON.parse(
+        Buffer.from(encoded, 'base64url').toString('utf8'),
+      );
+      const remaining = (exp + 2) * 1000 - Date.now();
+      assert.ok(
+        remaining > 0 && remaining < 45000,
+        'Configura actionTokenGeneratedByUserLifespan=30',
+      );
+      await new Promise((resolve) => setTimeout(resolve, remaining));
+      await rejectedRecovery.goto(expiring.href);
+      assert.match(
+        await rejectedRecovery.locator('body').innerText(),
+        /expired/i,
+      );
+      assert.equal(
+        await rejectedRecovery.locator('[name=password-new]').count(),
+        0,
+      );
+      await window.getByRole('button', { name: 'Cancelar acceso' }).click();
+      console.info(
+        'Enlace de recuperación no consumido venció y fue rechazado',
+      );
+    }
   } finally {
     await rejectedRecovery.close();
   }
