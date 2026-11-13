@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: struchkai_db
+      POSTGRES_USER: struchkai_owner
+      POSTGRES_PASSWORD: ${STRUCHKAI_POSTGRES_PASSWORD:?Define STRUCHKAI_POSTGRES_PASSWORD}
+    ports:
+      - '127.0.0.1:55432:5432'
+    volumes:
+      - struchkai_pg:/var/lib/postgresql
+volumes:
+  struchkai_pg:
