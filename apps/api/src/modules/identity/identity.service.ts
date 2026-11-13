@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, customFetch, jwtVerify } from 'jose';
 import { createHash } from 'node:crypto';
 import { Database } from '../../database.module.js';
 import { ApiFailure } from '../../http.js';
@@ -62,7 +62,25 @@ export class IdentityService {
       throw new Error('Emisor OIDC inválido');
     this.jwks = createRemoteJWKSet(
       new URL(this.issuer + '/protocol/openid-connect/certs'),
-      { timeoutDuration: 3000 },
+      {
+        timeoutDuration: 3000,
+        [customFetch]: async (url, options) => {
+          const response = await fetch(url, options).catch(() => {
+            throw new ApiFailure(
+              503,
+              'INTERNAL_ERROR',
+              'Identidad temporalmente no disponible',
+            );
+          });
+          if (!response.ok)
+            throw new ApiFailure(
+              503,
+              'INTERNAL_ERROR',
+              'Identidad temporalmente no disponible',
+            );
+          return response;
+        },
+      },
     );
   }
   async authenticate(req: IncomingMessage): Promise<Identity> {
@@ -82,7 +100,8 @@ export class IdentityService {
       requiredClaims: ['sub', 'exp', 'iat', 'sid'],
     })
       .then((result) => result.payload)
-      .catch(() => {
+      .catch((error: unknown) => {
+        if (error instanceof ApiFailure) throw error;
         throw unauthenticated();
       });
     const { sub, sid, email } = payload;

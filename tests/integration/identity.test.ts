@@ -18,11 +18,16 @@ test(
       kid: 'test',
       alg: 'RS256',
     };
-    const server = createServer((_req, res) =>
+    let keysAvailable = false;
+    const server = createServer((_req, res) => {
+      if (!keysAvailable) {
+        res.writeHead(503).end();
+        return;
+      }
       res
         .writeHead(200, { 'content-type': 'application/json' })
-        .end(JSON.stringify({ keys: [key] })),
-    );
+        .end(JSON.stringify({ keys: [key] }));
+    });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     t.after(() => {
@@ -104,6 +109,8 @@ test(
       b = await token('rio', 'session-c');
     assert.equal((await call('account')).status, 401);
     assert.equal((await call('account', 'garbage')).status, 401);
+    assert.equal((await call('account', a)).status, 503);
+    keysAvailable = true;
     const invalidTokens = [
       await token(
         'alex',
