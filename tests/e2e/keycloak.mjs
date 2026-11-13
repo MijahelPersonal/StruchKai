@@ -481,6 +481,21 @@ try {
   console.info(
     'Keycloak revocó la sesión; Electron rechazó restaurarla y eliminó la credencial',
   );
+  const rejectedRecovery = await browser.newPage();
+  try {
+    await rejectedRecovery.goto(resetUrl);
+    assert.match(
+      await rejectedRecovery.locator('body').innerText(),
+      /invalid|expired|an error occurred|already used/i,
+    );
+    assert.equal(
+      await rejectedRecovery.locator('[name=password-new]').count(),
+      0,
+    );
+    console.info('Segundo uso del enlace de recuperación rechazado');
+  } finally {
+    await rejectedRecovery.close();
+  }
 } finally {
   await desktop?.close().catch(() => {});
   await browser?.close().catch(() => {});
