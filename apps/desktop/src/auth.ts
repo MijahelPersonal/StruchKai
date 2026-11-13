@@ -6,6 +6,7 @@ import { join } from 'node:path';
 const redirect = 'http://127.0.0.1:43821/oidc/callback';
 const clientId = 'struchkai-desktop';
 type Action =
+  | 'cancel'
   | 'login'
   | 'register'
   | 'recover'
@@ -51,6 +52,7 @@ export function registerAuth(
   let tokens: { access_token: string; refresh_token?: string } | undefined;
   let config: oidc.Configuration | undefined;
   let running = false;
+  let pendingGrant: AbortController | undefined;
   async function configuration() {
     return (config ??= await oidc.discovery(
       issuer,
@@ -90,13 +92,19 @@ export function registerAuth(
       authorization.searchParams.delete('prompt');
     }
     const server = createServer();
-    const abort = AbortSignal.timeout(180000);
+    const controller = new AbortController();
+    pendingGrant = controller;
+    const abort = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(180000),
+    ]);
+    let accepted = false;
     try {
       const callback = await new Promise<URL>((resolve, reject) => {
         server.once('error', reject);
         abort.addEventListener(
           'abort',
-          () => reject(new Error('Acceso vencido')),
+          () => reject(new Error('Acceso cancelado o vencido')),
           { once: true },
         );
         server.on('request', (request, response) => {
@@ -110,6 +118,11 @@ export function registerAuth(
             response.writeHead(404).end();
             return;
           }
+          if (accepted || abort.aborted) {
+            response.writeHead(410).end();
+            return;
+          }
+          accepted = true;
           response
             .writeHead(200, {
               'Content-Type': 'text/plain; charset=utf-8',
@@ -117,12 +130,14 @@ export function registerAuth(
               Connection: 'close',
             })
             .end('Vuelve a StruchKai para ver el resultado.');
+          server.close();
           resolve(url);
         });
         server.listen(43821, '127.0.0.1', () => {
           void shell.openExternal(authorization.href).catch(reject);
         });
       });
+      pendingGrant = undefined;
       tokens = await oidc.authorizationCodeGrant(cfg, callback, {
         pkceCodeVerifier: verifier,
         expectedState: state,
@@ -131,6 +146,7 @@ export function registerAuth(
       });
       await remember();
     } finally {
+      pendingGrant = undefined;
       server.close();
       server.closeAllConnections();
     }
@@ -150,7 +166,12 @@ export function registerAuth(
       tokens.refresh_token ??= refreshToken;
       await remember();
       return true;
-    } catch {
+    } catch (error) {
+      if (
+        !(error instanceof oidc.ResponseBodyError) ||
+        error.error !== 'invalid_grant'
+      )
+        throw error;
       tokens = undefined;
       await rm(file, { force: true });
       return false;
@@ -189,14 +210,18 @@ export function registerAuth(
       if (
         event.sender !== window.webContents ||
         event.senderFrame !== window.webContents.mainFrame ||
-        event.senderFrame.url !== rendererUrl ||
-        running
+        event.senderFrame.url !== rendererUrl
       )
         return { error: 'Operación no disponible' };
       if (smoke)
         return action === 'account'
           ? { data: null }
           : { error: 'Operación no disponible' };
+      if (action === 'cancel') {
+        pendingGrant?.abort();
+        return { data: Boolean(pendingGrant) };
+      }
+      if (running) return { error: 'Operación no disponible' };
       running = true;
       try {
         switch (action) {

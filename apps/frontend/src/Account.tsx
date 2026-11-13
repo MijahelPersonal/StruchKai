@@ -36,6 +36,10 @@ export function Account() {
   }, [bridge]);
   async function run(action: string, value?: unknown) {
     if (!bridge) return;
+    if (action === 'cancel') {
+      await bridge.run('cancel').catch(() => undefined);
+      return;
+    }
     setBusy(true);
     setMessage('');
     try {
@@ -84,6 +88,9 @@ export function Account() {
   return (
     <section aria-label="Cuenta">
       <p role="status">{message}</p>
+      {busy && !profile && (
+        <button onClick={() => void run('cancel')}>Cancelar acceso</button>
+      )}
       <fieldset disabled={busy}>
         {!profile ? (
           <>
