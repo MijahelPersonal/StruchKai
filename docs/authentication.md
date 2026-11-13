@@ -48,3 +48,19 @@ El cierre desde Keycloak invalida la renovación. Un access token ya emitido pue
 Para probar códigos de recuperación, habilita Recovery Authentication Codes en Required Actions y configura Recovery Authentication Code Form como Alternative dentro de Browser - Conditional 2FA. Mantén OTP como alternativa. En la consola de cuenta de una identidad ficticia, genera el juego, usa el primer código desde Try another way y comprueba que el segundo acceso pide el siguiente. Regenera el juego y confirma que el anterior dejó de ser aceptado. Consume el juego de prueba para verificar el flujo de agotamiento. Conserva los códigos fuera de capturas, logs y PostgreSQL de StruchKai.
 
 Referencia: [guía oficial de códigos de recuperación de Keycloak](https://www.keycloak.org/2025/10/recovery-codes).
+
+## Windows Hello y passkeys
+
+Esta comprobación queda manual porque requiere el autenticador de plataforma y la presencia del usuario. Hazla en un realm de prueba y con una cuenta ficticia.
+
+1. En Windows abre **Configuración → Cuentas → Opciones de inicio de sesión** y confirma que el PIN de Windows Hello está disponible. Usa Edge en una ventana normal. Si el dispositivo no admite Hello, usa TOTP para volver a entrar.
+2. En Keycloak habilita **WebAuthn Register Passwordless** en **Authentication → Required actions**. En **Realm settings → Login** activa **Enable Passkeys**. Usa un hostname estable y un contexto seguro que Edge admita para WebAuthn. En la política **WebAuthn Passwordless**, mantén el RP ID alineado con ese hostname, habilita RS256 y exige verificación de usuario y credenciales detectables.
+3. Inicia sesión en Electron con la cuenta ficticia. Abre **Gestionar correo y MFA → Account security → Signing in**. Registra una passkey de Windows Hello y confirma con el PIN o biometría. Comprueba que aparece en esa cuenta.
+4. Cierra sesión en StruchKai y en Keycloak. Vuelve a **Iniciar sesión** desde Electron y elige la passkey en Edge. Confirma que Electron muestra el mismo perfil. Si la opción no aparece, revisa el flujo de navegador y la política de passkeys de Keycloak.
+5. Elimina la passkey en **Signing in**, vuelve a cerrar ambas sesiones e intenta usar la misma credencial. Confirma que Keycloak rechaza el acceso con esa credencial y que la cuenta todavía admite TOTP. Si Edge conserva una entrada en el selector, el resultado determinante es el rechazo del servidor.
+
+## Realm aislado para recuperación MFA
+
+Genera la configuración de prueba con node tests/e2e/fixtures/keycloak-realm.mjs y guárdala como struchkai-d2-realm.json en el directorio data/import de una instancia Keycloak de prueba. Usa almacenamiento nuevo y un listener en 127.0.0.1:8082. Conserva separado el realm de desarrollo. Configura STRUCHKAI_TEST_KEYCLOAK_PORT=8082 y STRUCHKAI_TEST_MFA_CODES=true antes de npm run test:oidc. El SMTP se limita a example.test. El ensayo conserva los códigos en memoria y comprueba generación, consumo, rechazo de reutilización, regeneración, invalidez del juego anterior y agotamiento.
+
+Para verificar inactividad de sesión en una instancia separada, configura ssoSessionIdleTimeout=15, accessTokenLifespan=12 y puerto 8083. Define STRUCHKAI_TEST_KEYCLOAK_PORT=8083 y STRUCHKAI_TEST_REFRESH_EXPIRY=true. Este modo espera 140 segundos para cubrir la tolerancia de Keycloak y verifica que el próximo arranque de Electron descarte la credencial que ya no puede renovar.
