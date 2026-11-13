@@ -3,7 +3,7 @@ import { randomBytes, createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile as fsRead, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, _electron as electron } from 'playwright';
@@ -79,14 +79,16 @@ try {
       ? route.continue()
       : route.abort(),
   );
-  desktop = await electron.launch({
-    args: ['--user-data-dir=' + profile, 'apps/desktop'],
-    env: {
-      ...process.env,
-      STRUCHKAI_OIDC_ISSUER: issuer,
-      STRUCHKAI_API_URL: 'http://127.0.0.1:43100',
-    },
-  });
+  const launch = () =>
+    electron.launch({
+      args: ['--user-data-dir=' + profile, 'apps/desktop'],
+      env: {
+        ...process.env,
+        STRUCHKAI_OIDC_ISSUER: issuer,
+        STRUCHKAI_API_URL: 'http://127.0.0.1:43100',
+      },
+    });
+  desktop = await launch();
   await desktop.evaluate(({ shell, app }) => {
     app.setPath(
       'userData',
@@ -98,6 +100,13 @@ try {
     );
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (url, options) => {
+      const target = new URL(url instanceof Request ? url.url : url);
+      if (
+        globalThis.struchkaiTestOffline &&
+        target.origin === 'http://127.0.0.1:8081' &&
+        target.pathname.endsWith('/token')
+      )
+        return Promise.reject(new TypeError('Fallo de red controlado'));
       if (
         new URL(url).origin === 'http://127.0.0.1:43100' &&
         options?.headers?.Authorization
@@ -109,7 +118,7 @@ try {
       globalThis.struchkaiTestUrl = url;
     };
   });
-  const window = await desktop.firstWindow();
+  let window = await desktop.firstWindow();
   assert.equal(
     await window.evaluate(() =>
       ['refreshToken', 'accessToken', 'safeStorage'].some(
@@ -301,8 +310,29 @@ try {
   const oldBearer = await desktop.evaluate(
     () => globalThis.struchkaiTestBearer,
   );
-  if (process.env.STRUCHKAI_TEST_SHORT_ACCESS === 'true')
+  if (process.env.STRUCHKAI_TEST_SHORT_ACCESS === 'true') {
     await new Promise((resolve) => setTimeout(resolve, 13000));
+    const encrypted = await fsRead(join(profile, 'oidc-session.bin'));
+    assert.ok(encrypted.length > 0);
+    await desktop.evaluate(() => {
+      globalThis.struchkaiTestOffline = true;
+    });
+    await window.getByRole('button', { name: 'Sesiones activas' }).click();
+    await window
+      .getByRole('status')
+      .filter({ hasText: 'La operación falló' })
+      .waitFor();
+    assert.deepEqual(
+      await fsRead(join(profile, 'oidc-session.bin')),
+      encrypted,
+    );
+    await desktop.evaluate(() => {
+      globalThis.struchkaiTestOffline = false;
+    });
+    console.info(
+      'Fallo transitorio de renovación conserva la credencial cifrada',
+    );
+  }
   await window.getByRole('button', { name: 'Sesiones activas' }).click();
   await window.getByText(/Actual/).waitFor();
   if (process.env.STRUCHKAI_TEST_SHORT_ACCESS === 'true') {
@@ -398,6 +428,58 @@ try {
   assert.deepEqual(statuses, [403, 403, 403]);
   console.info(
     'Dos cuentas reales, favoritos separados y accesos cruzados denegados',
+  );
+  await desktop.close();
+  desktop = await launch();
+  window = await desktop.firstWindow();
+  await window.getByText(email, { exact: true }).waitFor({ timeout: 15000 });
+  await window.getByRole('button', { name: 'Sesiones activas' }).click();
+  await window.getByText(/Actual/).waitFor();
+  console.info(
+    'Sesión restaurada tras reiniciar Electron con el mismo perfil temporal',
+  );
+  await desktop.evaluate(
+    async ({ safeStorage }, { encrypted, issuer }) => {
+      const credential = safeStorage.decryptString(
+        Buffer.from(encrypted, 'base64'),
+      );
+      const response = await fetch(issuer + '/protocol/openid-connect/logout', {
+        method: 'POST',
+        body: new URLSearchParams({
+          client_id: 'struchkai-desktop',
+          refresh_token: credential,
+        }),
+      });
+      if (response.status !== 204)
+        throw new Error('Keycloak no cerró la sesión de prueba');
+    },
+    {
+      encrypted: (await fsRead(join(profile, 'oidc-session.bin'))).toString(
+        'base64',
+      ),
+      issuer,
+    },
+  );
+  await desktop.close();
+  desktop = await launch();
+  window = await desktop.firstWindow();
+  await window
+    .getByRole('button', { name: 'Iniciar sesión', exact: true })
+    .waitFor();
+  await wait(
+    async () =>
+      fsRead(join(profile, 'oidc-session.bin')).then(
+        () => false,
+        (error) => {
+          if (error.code !== 'ENOENT') throw error;
+          return true;
+        },
+      ),
+    'credencial revocada eliminada',
+  );
+  assert.equal(await window.getByText(email, { exact: true }).count(), 0);
+  console.info(
+    'Keycloak revocó la sesión; Electron rechazó restaurarla y eliminó la credencial',
   );
 } finally {
   await desktop?.close().catch(() => {});
