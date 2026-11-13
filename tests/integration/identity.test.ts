@@ -65,20 +65,23 @@ test(
       sid: string,
       verified = true,
       aud = 'struchkai-api',
+      tokenIssuer = issuer,
+      expires: string | number = '5m',
+      authorizedParty = 'struchkai-desktop',
     ) {
       return new SignJWT({
         sid,
         email: subject + '@example.test',
         email_verified: verified,
         typ: 'Bearer',
-        azp: 'struchkai-desktop',
+        azp: authorizedParty,
       })
         .setProtectedHeader({ alg: 'RS256', kid: 'test' })
-        .setIssuer(issuer)
+        .setIssuer(tokenIssuer)
         .setAudience(aud)
         .setSubject(subject)
         .setIssuedAt()
-        .setExpirationTime('5m')
+        .setExpirationTime(expires)
         .sign(pair.privateKey);
     }
     const call = (
@@ -101,6 +104,42 @@ test(
       b = await token('rio', 'session-c');
     assert.equal((await call('account')).status, 401);
     assert.equal((await call('account', 'garbage')).status, 401);
+    const invalidTokens = [
+      await token(
+        'alex',
+        'bad-issuer',
+        true,
+        'struchkai-api',
+        issuer + '-other',
+      ),
+      await token(
+        'alex',
+        'expired',
+        true,
+        'struchkai-api',
+        issuer,
+        Math.floor(Date.now() / 1000) - 5,
+      ),
+      await token(
+        'alex',
+        'bad-client',
+        true,
+        'struchkai-api',
+        issuer,
+        '5m',
+        'other-client',
+      ),
+      a.slice(0, a.lastIndexOf('.') + 1) + 'invalid-signature',
+    ];
+    for (const invalid of invalidTokens) {
+      const response = await call('account', invalid);
+      assert.equal(response.status, 401);
+      assert.deepEqual(Object.keys(await response.json()).sort(), [
+        'code',
+        'message',
+        'requestId',
+      ]);
+    }
     assert.equal(
       (await call('account', await token('alex', 's', true, 'wrong'))).status,
       401,
