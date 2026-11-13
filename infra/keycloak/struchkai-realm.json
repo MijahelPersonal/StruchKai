@@ -53,6 +53,22 @@
       "enabled": true,
       "defaultAction": false,
       "priority": 30
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "priority": 5,
+      "providerId": "UPDATE_PASSWORD",
+      "defaultAction": false,
+      "enabled": true
+    },
+    {
+      "alias": "UPDATE_PROFILE",
+      "name": "Update Profile",
+      "priority": 40,
+      "providerId": "UPDATE_PROFILE",
+      "defaultAction": false,
+      "enabled": true
     }
   ],
   "clients": [

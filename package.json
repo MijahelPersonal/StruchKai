@@ -26,14 +26,20 @@
     "build:shared": "npm run build -w @struchkai/contracts -w @struchkai/providers -w @struchkai/database",
     "db:check": "npm run build:shared && npm run db:check -w @struchkai/database",
     "db:migrate": "npm run build:shared && npm run db:migrate -w @struchkai/database",
-    "db:seed": "npm run build:shared && npm run db:seed -w @struchkai/database"
+    "db:seed": "npm run build:shared && npm run db:seed -w @struchkai/database",
+    "test:oidc": "node tests/e2e/keycloak.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/mailparser": "^3.9.0",
     "@types/node": "^24.10.0",
+    "@types/smtp-server": "^3.5.13",
     "eslint": "^10.14.0",
     "globals": "^16.5.0",
+    "mailparser": "^3.14.3",
+    "playwright": "^1.65.0",
     "prettier": "^3.6.2",
+    "smtp-server": "^3.21.4",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.0"
   }

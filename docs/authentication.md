@@ -18,3 +18,15 @@ En Perfil y sesiones puedes actualizar nombre, avatar e idioma, ver sesiones y r
 La API permanece en loopback. Los perfiles demo solo se habilitan con STRUCHKAI_DEMO_PROFILES=true fuera de producción. En producción usa HTTPS, un despliegue de Keycloak distinto de start-dev y SMTP configurado. Protege la consola administrativa y conserva el acceso administrativo separado.
 
 Las pruebas de API usan el clúster local aislado y un JWKS de prueba. El ensayo con Keycloak real se documenta por separado, incluyendo el estado de correo, TOTP y passkeys.
+
+## Regresión con Keycloak real
+
+La prueba usa Edge, Electron, NestJS, PostgreSQL y un capturador SMTP local en 127.0.0.1:25252. El navegador automatizado recibe la misma URL que Electron entrega a shell.openExternal. El ensayo no usa el perfil de navegador ni el almacenamiento de Electron del usuario.
+
+1. Prepara la base PostgreSQL aislada, con las migraciones, los grants y STRUCHKAI_TEST_APP_URL.
+2. Copia el JSON del realm a la carpeta data/import de una instalación local de prueba. Cambia realm a struchkai-d2 y configura smtpServer con host 127.0.0.1, port 25252, from struchkai@example.test y auth, ssl y starttls en false. Arranca Keycloak en 127.0.0.1:8081 con --import-realm y una base de identidad de prueba separada.
+3. Ejecuta npm run build y npm run test:oidc. El ensayo genera identidades ficticias, captura correo solo para example.test y verifica el retorno a Electron.
+
+Para un realm existente, habilita Update Password y Update Profile en Authentication > Required actions. Una importación de arranque conserva los realms ya existentes. Comprueba también Configure OTP y Verify Email.
+
+En una sesión de pruebas manual, abre Gestionar correo y MFA y registra una passkey con Windows Hello o una llave de seguridad. Cierra sesión, vuelve a entrar con la passkey y elimínala desde la consola de cuenta. Si el realm ofrece códigos de recuperación, genera uno de prueba y verifica que el segundo uso se rechace.

@@ -21,3 +21,5 @@ Consulta [arquitectura y migración](docs/architecture.md).
 Para los endpoints de Fase B y OpenAPI, consulta [API local v1](docs/api-v1.md).
 
 Consulta la [guía de cuentas y autenticación](docs/authentication.md) para configurar Keycloak y acceder desde Electron.
+
+La prueba integral local se ejecuta con npm run test:oidc. Consulta los requisitos del realm aislado y SMTP en [autenticación](docs/authentication.md).

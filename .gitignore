@@ -6,3 +6,4 @@ coverage/
 !.env.example
 *.log
 .struchkai-local/
+/data/h2/

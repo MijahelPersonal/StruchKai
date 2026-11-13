@@ -35,3 +35,9 @@ El clúster local vive en .struchkai-local/pgdata. Para detenerlo o reanudarlo u
 ## Fase D
 
 Keycloak 26.8.2 inició en Windows con Java 26 y publicó discovery en loopback. Se aplicó la migración aditiva en las bases dedicadas y se reanudó el clúster después de comprobar que su archivo PID había quedado obsoleto. Las pruebas de cuenta de la API usan un emisor local JWKS con tokens de prueba y PostgreSQL real. Cubren rechazo de tokens, correo no verificado, perfil, roles, separación de cuentas, favoritos y revocación. El flujo de correo, recuperación, TOTP y passkeys requiere pruebas independientes con SMTP y navegador.
+
+## Fase D.2
+
+Aprobados con Keycloak 26.8.2 real, Edge, Electron y PostgreSQL aislado: registro ficticio, TOTP durante el alta, correo de verificación en el capturador local, intercambio PKCE, perfil visible mediante la API, listado de sesiones, cierre y recuperación de contraseña con retorno autenticado a Electron. El ensayo intercepta la invocación al navegador del sistema y navega por la URL resultante en Edge automatizado.
+
+La importación anterior omitía UPDATE_PASSWORD y UPDATE_PROFILE. Se añadieron las acciones al realm y se repitió el alta y recuperación. Quedan por verificar de forma dedicada la caducidad y repetición de enlaces, las passkeys, los códigos de recuperación, la renovación y la cancelación de Electron, y el aislamiento con dos cuentas emitidas por Keycloak real. Las pruebas de aislamiento y revocación de la API usan JWKS de prueba y PostgreSQL real.
