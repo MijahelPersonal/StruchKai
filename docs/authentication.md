@@ -30,3 +30,21 @@ La prueba usa Edge, Electron, NestJS, PostgreSQL y un capturador SMTP local en 1
 Para un realm existente, habilita Update Password y Update Profile en Authentication > Required actions. Una importación de arranque conserva los realms ya existentes. Comprueba también Configure OTP y Verify Email.
 
 En una sesión de pruebas manual, abre Gestionar correo y MFA y registra una passkey con Windows Hello o una llave de seguridad. Cierra sesión, vuelve a entrar con la passkey y elimínala desde la consola de cuenta. Si el realm ofrece códigos de recuperación, genera uno de prueba y verifica que el segundo uso se rechace.
+
+## Validación D.3
+
+Para verificar renovación real, importa el realm de prueba en almacenamiento aislado con accessTokenLifespan=12 y ejecuta npm run test:oidc con STRUCHKAI_TEST_SHORT_ACCESS=true. La prueba espera el vencimiento y comprueba que Electron usa un access token diferente al solicitar las sesiones. El perfil temporal de Electron, las cuentas ficticias y el capturador SMTP permanecen separados del entorno de usuario.
+
+Si cierras el navegador durante el acceso, pulsa **Cancelar acceso** en Electron. El callback deja de escuchar y puedes iniciar otro intento. Una interrupción del proveedor durante una renovación conserva el token de renovación para reintentar. Keycloak responde invalid_grant cuando deja de admitir la credencial y Electron la elimina.
+
+Para la prueba manual de Windows Hello usa una cuenta ficticia y un realm con WebAuthn Passwordless y un RP ID compatible con el dominio de pruebas. En **Gestionar correo y MFA**, registra una passkey con Windows Hello. Cierra sesión, autentícate de nuevo en Electron y elimina la passkey en Keycloak. En otro intento, comprueba que la credencial eliminada no inicia sesión. Repite en un dispositivo sin Windows Hello para verificar que el flujo permite volver a otro factor. Los códigos de recuperación requieren habilitar su acción y ejecución en Keycloak antes de probar generación, consumo, segundo uso y regeneración.
+
+### Caducidad, reintentos y revocación
+
+Para repetir la expiración de un enlace, configura actionTokenGeneratedByUserLifespan=30 al importar el realm aislado y exporta STRUCHKAI_TEST_SHORT_LINK=true. El ensayo pide un segundo correo, espera el exp del enlace de prueba y comprueba que Keycloak muestra el rechazo sin ofrecer un formulario de cambio de contraseña.
+
+El cierre desde Keycloak invalida la renovación. Un access token ya emitido puede seguir vigente hasta su expiración si StruchKai aún no ha revocado su propia sesión. Para cortar inmediatamente el acceso a la API, revoca también la sesión desde StruchKai.
+
+Para probar códigos de recuperación, habilita Recovery Authentication Codes en Required Actions y configura Recovery Authentication Code Form como Alternative dentro de Browser - Conditional 2FA. Mantén OTP como alternativa. En la consola de cuenta de una identidad ficticia, genera el juego, usa el primer código desde Try another way y comprueba que el segundo acceso pide el siguiente. Regenera el juego y confirma que el anterior dejó de ser aceptado. Consume el juego de prueba para verificar el flujo de agotamiento. Conserva los códigos fuera de capturas, logs y PostgreSQL de StruchKai.
+
+Referencia: [guía oficial de códigos de recuperación de Keycloak](https://www.keycloak.org/2025/10/recovery-codes).

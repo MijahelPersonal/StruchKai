@@ -45,3 +45,9 @@ Los repositorios ejecutan consultas parametrizadas en PostgreSQL. Los slugs mant
 Keycloak administra el acceso y Nest vincula la identidad por emisor y sujeto. PostgreSQL conserva perfiles y sesiones revocables. Electron realiza el intercambio OIDC en el proceso principal. [Configuración](authentication.md).
 
 La regresión OIDC usa un realm y una base de prueba separados. Keycloak conserva las credenciales y el backend conserva la propiedad de perfiles y la revocación de acceso a StruchKai. El capturador de correo vive en el proceso de prueba.
+
+### D.3
+
+Electron permite cancelar un retorno pendiente y cierra el listener al aceptar el callback. Ante una interrupción transitoria de la renovación, conserva la credencial cifrada. La regresión OIDC cubre dos cuentas de Keycloak y un access token de vida corta.
+
+La prueba integral verifica persistencia de la credencial cifrada tras un fallo temporal, restauración al reiniciar y descarte tras revocación por Keycloak. La revocación local bloquea el acceso a la API desde el momento en que se registra.
