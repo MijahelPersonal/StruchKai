@@ -9,7 +9,9 @@ import { join } from 'node:path';
 import { chromium, _electron as electron } from 'playwright';
 import { SMTPServer } from 'smtp-server';
 import { simpleParser } from 'mailparser';
-const issuer = 'http://127.0.0.1:8081/realms/struchkai-d2';
+const port = process.env.STRUCHKAI_TEST_KEYCLOAK_PORT ?? '8081';
+assert.match(port, /^808[1-3]$/);
+const issuer = 'http://127.0.0.1:' + port + '/realms/struchkai-d2';
 const testDb = process.env.STRUCHKAI_TEST_APP_URL;
 assert.ok(
   testDb &&
@@ -90,7 +92,7 @@ try {
     });
   desktop = await launch();
   const interceptBrowser = async () => {
-    await desktop.evaluate(({ shell, app }) => {
+    await desktop.evaluate(({ shell, app }, issuerOrigin) => {
       app.setPath(
         'userData',
         process.argv
@@ -99,12 +101,19 @@ try {
           .slice(1)
           .join('=') ?? app.getPath('userData'),
       );
+      const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+      AbortSignal.timeout = (delay) =>
+        originalTimeout(
+          delay === 180000 && globalThis.struchkaiTestShortCallback
+            ? 4000
+            : delay,
+        );
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (url, options) => {
         const target = new URL(url instanceof Request ? url.url : url);
         if (
           globalThis.struchkaiTestOffline &&
-          target.origin === 'http://127.0.0.1:8081' &&
+          target.origin === issuerOrigin &&
           target.pathname.endsWith('/token')
         )
           return Promise.reject(new TypeError('Fallo de red controlado'));
@@ -118,7 +127,7 @@ try {
       shell.openExternal = async (url) => {
         globalThis.struchkaiTestUrl = url;
       };
-    });
+    }, new URL(issuer).origin);
   };
   await interceptBrowser();
   let window = await desktop.firstWindow();
@@ -134,7 +143,7 @@ try {
     await window.evaluate(() => Object.keys(globalThis.struchkaiAuth)),
     ['run'],
   );
-  const open = async (label) => {
+  const open = async (label, action) => {
     await desktop.evaluate(() => {
       globalThis.struchkaiTestUrl = undefined;
     });
@@ -147,8 +156,10 @@ try {
       new URL(url).searchParams.get('code_challenge') ?? '',
       /^[A-Za-z0-9_-]{43}$/,
     );
-    await page.goto(url);
-    return new URL(url);
+    const target = new URL(url);
+    if (action) target.searchParams.set('kc_action', action);
+    await page.goto(target.href);
+    return target;
   };
   const occupied = createServer();
   await new Promise((resolve, reject) => {
@@ -193,6 +204,22 @@ try {
     fetch('http://127.0.0.1:43821/oidc/callback?state=tardio'),
   );
   console.info('State incorrecto, cancelación y listener cerrado comprobados');
+  await desktop.evaluate(() => {
+    globalThis.struchkaiTestShortCallback = true;
+  });
+  const timed = await open('Iniciar sesión');
+  await window
+    .getByRole('status')
+    .filter({ hasText: 'La operación falló' })
+    .waitFor();
+  const late = new URL(timed.searchParams.get('redirect_uri'));
+  late.searchParams.set('state', timed.searchParams.get('state'));
+  late.searchParams.set('code', 'late-test');
+  await assert.rejects(fetch(late));
+  await desktop.evaluate(() => {
+    globalThis.struchkaiTestShortCallback = false;
+  });
+  console.info('Timeout OIDC y rechazo del callback tardío comprobados');
   const totp = (secret) => {
     const counter = Buffer.alloc(8);
     counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
@@ -253,7 +280,7 @@ try {
     .filter({ hasText: 'La operación falló' })
     .waitFor();
   console.info('Código inválido y repetición del callback rechazados');
-  const register = async () => {
+  const register = async ({ expireVerification = false } = {}) => {
     await open('Registrarme');
     page.setDefaultTimeout(6000);
     for (const [name, value] of [
@@ -285,7 +312,41 @@ try {
       /https?:\/\/[^\s<>]+\/login-actions\/action-token\?[^\s<>]+/,
     )?.[0];
     assert.ok(link);
-    assert.equal(new URL(link).origin, 'http://127.0.0.1:8081');
+    assert.equal(new URL(link).origin, new URL(issuer).origin);
+    if (expireVerification) {
+      const target = new URL(link);
+      const encoded = target.searchParams.get('key')?.split('.')[1];
+      assert.ok(encoded);
+      const { exp } = JSON.parse(
+        Buffer.from(encoded, 'base64url').toString('utf8'),
+      );
+      const delay = (exp + 2) * 1000 - Date.now();
+      assert.ok(
+        delay > 0 && delay < 45000,
+        'Configura la vida de enlaces de prueba a 30 segundos',
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      const isolated = await browser.newPage();
+      try {
+        await isolated.goto(target.href);
+        assert.match(await isolated.locator('body').innerText(), /expired/i);
+        assert.equal(await window.getByText(email, { exact: true }).count(), 0);
+      } finally {
+        await isolated.close();
+      }
+      await window.getByRole('button', { name: 'Cancelar acceso' }).click();
+      await wait(
+        () =>
+          window
+            .getByRole('button', { name: 'Registrarme', exact: true })
+            .isEnabled(),
+        'cancelación del registro vencido',
+      );
+      console.info(
+        'Enlace de verificación sin consumir expiró y fue rechazado',
+      );
+      return;
+    }
     const tampered = new URL(link);
     tampered.searchParams.set('key', 'invalid');
     const rejected = await browser.newPage();
@@ -305,7 +366,28 @@ try {
     if (await proceed.count()) await proceed.first().click();
     await finishOtp();
     await window.getByText(email, { exact: true }).waitFor({ timeout: 20000 });
+    const replay = await browser.newPage();
+    try {
+      await replay.route('**/*', (route) =>
+        new URL(route.request().url()).hostname === '127.0.0.1'
+          ? route.continue()
+          : route.abort(),
+      );
+      await replay.goto(link);
+      assert.match(
+        await replay.locator('body').innerText(),
+        /already.*verified|verified.*already|expired|invalid|an error occurred/i,
+      );
+      assert.equal(new URL(replay.url()).origin, new URL(issuer).origin);
+    } finally {
+      await replay.close();
+    }
+    console.info('Segundo uso de la verificación no abrió otra sesión');
   };
+  if (process.env.STRUCHKAI_TEST_SHORT_LINK === 'true') {
+    await register({ expireVerification: true });
+    email = 'struchkai-' + randomBytes(8).toString('hex') + '@example.test';
+  }
   await register();
   console.info(
     'Registro, SMTP, TOTP, PKCE y GET /v1/account comprobados con Electron y Keycloak real',
@@ -362,7 +444,7 @@ try {
     /https?:\/\/[^\s<>]+\/login-actions\/action-token\?[^\s<>]+/,
   )?.[0];
   assert.ok(resetUrl);
-  assert.equal(new URL(resetUrl).origin, 'http://127.0.0.1:8081');
+  assert.equal(new URL(resetUrl).origin, new URL(issuer).origin);
   await page.goto(resetUrl);
   const confirmation = page.locator('#kc-info-message a');
   if (await confirmation.count()) await confirmation.first().click();
@@ -409,138 +491,314 @@ try {
   );
   assert.equal(await window.getByText(/atlas-del-viento ·/).count(), 0);
   const accountB = await currentAccount();
-  assert.notEqual(accountA.profileId, accountB.profileId);
-  const statuses = await desktop.evaluate(async (_electron, slug) => {
-    const headers = {
-      Authorization: globalThis.struchkaiTestBearer,
-      'Content-Type': 'application/json',
-    };
-    const base = 'http://127.0.0.1:43100/v1/';
-    return Promise.all([
-      fetch(base + 'library/' + slug + '/favorites', { headers }).then(
-        (r) => r.status,
-      ),
-      fetch(base + 'library/' + slug + '/anime/atlas-del-viento', {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ favorite: false }),
-      }).then((r) => r.status),
-      fetch(base + 'admin/access', { headers }).then((r) => r.status),
-    ]);
-  }, accountA.slug);
-  assert.deepEqual(statuses, [403, 403, 403]);
-  console.info(
-    'Dos cuentas reales, favoritos separados y accesos cruzados denegados',
-  );
-  await desktop.close();
-  desktop = await launch();
-  await interceptBrowser();
-  window = await desktop.firstWindow();
-  await window.getByText(email, { exact: true }).waitFor({ timeout: 15000 });
-  await window.getByRole('button', { name: 'Sesiones activas' }).click();
-  await window.getByText(/Actual/).waitFor();
-  console.info(
-    'Sesión restaurada tras reiniciar Electron con el mismo perfil temporal',
-  );
-  await desktop.evaluate(
-    async ({ safeStorage }, { encrypted, issuer }) => {
-      const credential = safeStorage.decryptString(
-        Buffer.from(encrypted, 'base64'),
-      );
-      const response = await fetch(issuer + '/protocol/openid-connect/logout', {
-        method: 'POST',
-        body: new URLSearchParams({
-          client_id: 'struchkai-desktop',
-          refresh_token: credential,
-        }),
-      });
-      if (response.status !== 204)
-        throw new Error('Keycloak no cerró la sesión de prueba');
-    },
-    {
-      encrypted: (await fsRead(join(profile, 'oidc-session.bin'))).toString(
-        'base64',
-      ),
-      issuer,
-    },
-  );
-  await desktop.close();
-  desktop = await launch();
-  await interceptBrowser();
-  window = await desktop.firstWindow();
-  await window
-    .getByRole('button', { name: 'Iniciar sesión', exact: true })
-    .waitFor();
-  await wait(
-    async () =>
-      fsRead(join(profile, 'oidc-session.bin')).then(
-        () => false,
-        (error) => {
-          if (error.code !== 'ENOENT') throw error;
-          return true;
-        },
-      ),
-    'credencial revocada eliminada',
-  );
-  assert.equal(await window.getByText(email, { exact: true }).count(), 0);
-  console.info(
-    'Keycloak revocó la sesión; Electron rechazó restaurarla y eliminó la credencial',
-  );
-  const rejectedRecovery = await browser.newPage();
-  try {
-    await rejectedRecovery.goto(resetUrl);
-    assert.match(
-      await rejectedRecovery.locator('body').innerText(),
-      /invalid|expired|an error occurred|already used/i,
+  if (process.env.STRUCHKAI_TEST_REFRESH_EXPIRY === 'true') {
+    const credential = await fsRead(join(profile, 'oidc-session.bin'));
+    assert.ok(credential.length);
+    await desktop.close();
+    // Keycloak añade una ventana de tolerancia a la inactividad de la sesión.
+    await new Promise((resolve) => setTimeout(resolve, 140000));
+    desktop = await launch();
+    window = await desktop.firstWindow();
+    await wait(
+      async () =>
+        fsRead(join(profile, 'oidc-session.bin')).then(
+          () => false,
+          (error) => {
+            if (error.code !== 'ENOENT') throw error;
+            return true;
+          },
+        ),
+      'refresh token vencido y eliminado',
     );
-    assert.equal(
-      await rejectedRecovery.locator('[name=password-new]').count(),
-      0,
+    await window
+      .getByRole('button', { name: 'Iniciar sesión', exact: true })
+      .waitFor();
+    assert.equal(await window.getByText(email, { exact: true }).count(), 0);
+    console.info(
+      'Renovación rechazada tras expiración natural por inactividad',
     );
-    console.info('Segundo uso del enlace de recuperación rechazado');
-    if (process.env.STRUCHKAI_TEST_SHORT_LINK === 'true') {
-      const before = mails.length;
-      await open('Recuperar acceso');
-      await page.locator('a[href*="reset-credentials"]').click();
+  } else {
+    assert.notEqual(accountA.profileId, accountB.profileId);
+    const statuses = await desktop.evaluate(async (_electron, slug) => {
+      const headers = {
+        Authorization: globalThis.struchkaiTestBearer,
+        'Content-Type': 'application/json',
+      };
+      const base = 'http://127.0.0.1:43100/v1/';
+      return Promise.all([
+        fetch(base + 'library/' + slug + '/favorites', { headers }).then(
+          (r) => r.status,
+        ),
+        fetch(base + 'library/' + slug + '/anime/atlas-del-viento', {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ favorite: false }),
+        }).then((r) => r.status),
+        fetch(base + 'admin/access', { headers }).then((r) => r.status),
+      ]);
+    }, accountA.slug);
+    assert.deepEqual(statuses, [403, 403, 403]);
+    console.info(
+      'Dos cuentas reales, favoritos separados y accesos cruzados denegados',
+    );
+    await desktop.close();
+    desktop = await launch();
+    await interceptBrowser();
+    window = await desktop.firstWindow();
+    await window.getByText(email, { exact: true }).waitFor({ timeout: 15000 });
+    await window.getByRole('button', { name: 'Sesiones activas' }).click();
+    await window.getByText(/Actual/).waitFor();
+    console.info(
+      'Sesión restaurada tras reiniciar Electron con el mismo perfil temporal',
+    );
+    await desktop.evaluate(
+      async ({ safeStorage }, { encrypted, issuer }) => {
+        const credential = safeStorage.decryptString(
+          Buffer.from(encrypted, 'base64'),
+        );
+        const response = await fetch(
+          issuer + '/protocol/openid-connect/logout',
+          {
+            method: 'POST',
+            body: new URLSearchParams({
+              client_id: 'struchkai-desktop',
+              refresh_token: credential,
+            }),
+          },
+        );
+        if (response.status !== 204)
+          throw new Error('Keycloak no cerró la sesión de prueba');
+      },
+      {
+        encrypted: (await fsRead(join(profile, 'oidc-session.bin'))).toString(
+          'base64',
+        ),
+        issuer,
+      },
+    );
+    await desktop.close();
+    desktop = await launch();
+    await interceptBrowser();
+    window = await desktop.firstWindow();
+    await window
+      .getByRole('button', { name: 'Iniciar sesión', exact: true })
+      .waitFor();
+    await wait(
+      async () =>
+        fsRead(join(profile, 'oidc-session.bin')).then(
+          () => false,
+          (error) => {
+            if (error.code !== 'ENOENT') throw error;
+            return true;
+          },
+        ),
+      'credencial revocada eliminada',
+    );
+    assert.equal(await window.getByText(email, { exact: true }).count(), 0);
+    console.info(
+      'Keycloak revocó la sesión; Electron rechazó restaurarla y eliminó la credencial',
+    );
+    async function signInWithOtp() {
+      await page.context().clearCookies();
+      await open('Iniciar sesión');
       await page.locator('[name=username]').fill(email);
+      await page.locator('[name=password]').fill(password);
       await page.locator('form [type=submit]').first().click();
-      const fresh = await wait(
-        () => mails.slice(before).find((mail) => mail.to === email),
-        'segundo correo de recuperación',
+      const input = page.locator('[name=otp]');
+      await new Promise((resolve) =>
+        setTimeout(resolve, 30500 - (Date.now() % 30000)),
       );
-      const href = fresh.text.match(
-        /https?:\/\/[^\s<>]+\/login-actions\/action-token\?[^\s<>]+/,
-      )?.[0];
-      assert.ok(href);
-      const expiring = new URL(href);
-      assert.equal(expiring.origin, new URL(issuer).origin);
-      const encoded = expiring.searchParams.get('key')?.split('.')[1];
-      assert.ok(encoded);
-      const { exp } = JSON.parse(
-        Buffer.from(encoded, 'base64url').toString('utf8'),
+      await input.fill(totp(secret));
+      await input
+        .locator('xpath=ancestor::form')
+        .locator('[type=submit]')
+        .click();
+      await page.waitForURL((url) => url.port === '43821', { timeout: 8000 });
+    }
+    await desktop.evaluate(() => {
+      globalThis.struchkaiTestOffline = true;
+    });
+    await signInWithOtp();
+    await window
+      .getByRole('status')
+      .filter({ hasText: 'La operación falló' })
+      .waitFor();
+    assert.equal(await window.getByText(email, { exact: true }).count(), 0);
+    await desktop.evaluate(() => {
+      globalThis.struchkaiTestOffline = false;
+    });
+    await signInWithOtp();
+    await window.getByText(email, { exact: true }).waitFor();
+    await window.getByRole('button', { name: 'Cerrar sesión' }).click();
+    await window
+      .getByRole('button', { name: 'Iniciar sesión', exact: true })
+      .waitFor();
+    console.info(
+      'Intercambio inicial interrumpido y nuevo acceso después de reconectar comprobados',
+    );
+    if (process.env.STRUCHKAI_TEST_MFA_CODES === 'true') {
+      const signOut = async () => {
+        await window.getByRole('button', { name: 'Cerrar sesión' }).click();
+        await window
+          .getByRole('button', { name: 'Iniciar sesión', exact: true })
+          .waitFor();
+      };
+      const beginPasswordLogin = async (action) => {
+        await page.context().clearCookies();
+        await open('Iniciar sesión', action);
+        await page.locator('[name=username]').fill(email);
+        await page.locator('[name=password]').fill(password);
+        await page.locator('form [type=submit]').first().click();
+      };
+      const generate = async () => {
+        await beginPasswordLogin('CONFIGURE_RECOVERY_AUTHN_CODES');
+        await new Promise((resolve) =>
+          setTimeout(resolve, 30500 - (Date.now() % 30000)),
+        );
+        const otp = page.locator('[name=otp]');
+        await otp.fill(totp(secret));
+        await otp
+          .locator('xpath=ancestor::form')
+          .locator('[type=submit]')
+          .click();
+        const hidden = page.locator('[name=generatedRecoveryAuthnCodes]');
+        await hidden.waitFor({ state: 'attached' });
+        const codes = (await hidden.inputValue()).split(',');
+        assert.equal(codes.length, 12);
+        await page.locator('#kcRecoveryCodesConfirmationCheck').check();
+        await page.locator('#saveRecoveryAuthnCodesBtn').click();
+        await window.getByText(email, { exact: true }).waitFor();
+        await signOut();
+        return codes;
+      };
+      const beginRecovery = async () => {
+        await beginPasswordLogin();
+        await page.getByText(/try another way/i, { exact: true }).click();
+        await page
+          .getByText(/recovery authentication code/i)
+          .first()
+          .click();
+        await page.locator('[name=recoveryCodeInput]').waitFor();
+      };
+      const useCode = async (code, valid) => {
+        try {
+          await page.locator('[name=recoveryCodeInput]').fill(code);
+          await page.locator('#kc-login').click();
+          if (valid) await window.getByText(email, { exact: true }).waitFor();
+          else {
+            await page
+              .getByText(/invalid|incorrect/i)
+              .first()
+              .waitFor();
+            assert.equal(
+              await window.getByText(email, { exact: true }).count(),
+              0,
+            );
+          }
+        } catch {
+          throw new Error(
+            'Resultado inesperado en el formulario de recuperación MFA',
+          );
+        }
+      };
+      const old = await generate();
+      await beginRecovery();
+      await useCode(old[0], true);
+      await signOut();
+      await beginRecovery();
+      await useCode(old[0], false);
+      await window.getByRole('button', { name: 'Cancelar acceso' }).click();
+      await wait(
+        () =>
+          window
+            .getByRole('button', { name: 'Iniciar sesión', exact: true })
+            .isEnabled(),
+        'cancelación MFA',
       );
-      const remaining = (exp + 2) * 1000 - Date.now();
-      assert.ok(
-        remaining > 0 && remaining < 45000,
-        'Configura actionTokenGeneratedByUserLifespan=30',
+      const replacement = await generate();
+      await beginRecovery();
+      await useCode(old[1], false);
+      await useCode(replacement[0], true);
+      await signOut();
+      for (const code of replacement.slice(1, -1)) {
+        await beginRecovery();
+        await useCode(code, true);
+        await signOut();
+      }
+      await beginRecovery();
+      await page.locator('[name=recoveryCodeInput]').fill(replacement.at(-1));
+      await page.locator('#kc-login').click();
+      await page
+        .locator('[name=generatedRecoveryAuthnCodes]')
+        .waitFor({ state: 'attached' });
+      await window.getByRole('button', { name: 'Cancelar acceso' }).click();
+      await wait(
+        () =>
+          window
+            .getByRole('button', { name: 'Iniciar sesión', exact: true })
+            .isEnabled(),
+        'cierre tras agotar códigos',
       );
-      await new Promise((resolve) => setTimeout(resolve, remaining));
-      await rejectedRecovery.goto(expiring.href);
+      console.info(
+        'Códigos MFA: generación, uso único, regeneración, rechazo del juego anterior y agotamiento comprobados',
+      );
+    }
+    const rejectedRecovery = await browser.newPage();
+    try {
+      await rejectedRecovery.goto(resetUrl);
       assert.match(
         await rejectedRecovery.locator('body').innerText(),
-        /expired/i,
+        /invalid|expired|an error occurred|already used/i,
       );
       assert.equal(
         await rejectedRecovery.locator('[name=password-new]').count(),
         0,
       );
-      await window.getByRole('button', { name: 'Cancelar acceso' }).click();
-      console.info(
-        'Enlace de recuperación no consumido venció y fue rechazado',
-      );
+      console.info('Segundo uso del enlace de recuperación rechazado');
+      if (process.env.STRUCHKAI_TEST_SHORT_LINK === 'true') {
+        const before = mails.length;
+        await open('Recuperar acceso');
+        await page.locator('a[href*="reset-credentials"]').click();
+        await page.locator('[name=username]').fill(email);
+        await page.locator('form [type=submit]').first().click();
+        const fresh = await wait(
+          () => mails.slice(before).find((mail) => mail.to === email),
+          'segundo correo de recuperación',
+        );
+        const href = fresh.text.match(
+          /https?:\/\/[^\s<>]+\/login-actions\/action-token\?[^\s<>]+/,
+        )?.[0];
+        assert.ok(href);
+        const expiring = new URL(href);
+        assert.equal(expiring.origin, new URL(issuer).origin);
+        const encoded = expiring.searchParams.get('key')?.split('.')[1];
+        assert.ok(encoded);
+        const { exp } = JSON.parse(
+          Buffer.from(encoded, 'base64url').toString('utf8'),
+        );
+        const remaining = (exp + 2) * 1000 - Date.now();
+        assert.ok(
+          remaining > 0 && remaining < 45000,
+          'Configura actionTokenGeneratedByUserLifespan=30',
+        );
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+        await rejectedRecovery.goto(expiring.href);
+        assert.match(
+          await rejectedRecovery.locator('body').innerText(),
+          /expired/i,
+        );
+        assert.equal(
+          await rejectedRecovery.locator('[name=password-new]').count(),
+          0,
+        );
+        await window.getByRole('button', { name: 'Cancelar acceso' }).click();
+        console.info(
+          'Enlace de recuperación no consumido venció y fue rechazado',
+        );
+      }
+    } finally {
+      await rejectedRecovery.close();
     }
-  } finally {
-    await rejectedRecovery.close();
   }
 } finally {
   await desktop?.close().catch(() => {});
