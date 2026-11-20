@@ -11,6 +11,7 @@
     "packages/*"
   ],
   "scripts": {
+    "start:local": "node scripts/start-local.mjs",
     "dev": "npm run dev -w @struchkai/frontend",
     "dev:admin": "npm run dev -w @struchkai/admin",
     "dev:desktop": "npm run build -w @struchkai/desktop && npm run dev -w @struchkai/desktop",

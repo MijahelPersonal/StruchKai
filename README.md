@@ -2,8 +2,13 @@
 
 Requiere Node.js 24.11 o posterior de la rama 24 y npm 11. Ejecuta npm ci en la raíz. Configura una base dedicada según la [guía PostgreSQL](docs/postgresql.md).
 
+Para volver a abrir la instalación local de Windows, ejecuta `npm run start:local` desde esta carpeta. Compila, comprueba los servicios y abre Electron; mantiene los procesos activos y reutiliza los puertos ocupados. Necesita la instalación y el clúster locales ya preparados en `.struchkai-local/`; no crea ni reemplaza bases de datos o realms. PostgreSQL usa 55433, Keycloak 8083, NestJS 3100 y React 5173.
+
+La configuración pública compartida vive en `.env` en la raíz (copia `.env.example` si falta). Electron y el comando de arranque de la API leen el mismo issuer `http://127.0.0.1:8083/realms/struchkai`. Conserva la conexión privada de PostgreSQL en `apps/api/.env`. Las variables explícitas del proceso tienen prioridad. Reinicia API y Electron después de cambiar la configuración; el lanzador reutiliza servicios activos, no cambia su entorno.
+
 | Comando                               | Uso                                                            |
 | ------------------------------------- | -------------------------------------------------------------- |
+| npm run start:local                   | Comprueba los servicios locales de Windows y abre StruchKai    |
 | npm run dev                           | Frontend React en 127.0.0.1:5173                               |
 | npm run dev:desktop                   | Electron. Inicia primero el frontend en otra terminal          |
 | npm run dev:api                       | Nest en 127.0.0.1:3100/health. Configura apps/api/.env         |
@@ -17,6 +22,8 @@ Requiere Node.js 24.11 o posterior de la rama 24 y npm 11. Ejecuta npm ci en la 
 | npm run test:desktop                  | Compila y comprueba una ventana real. Requiere entorno gráfico |
 
 Consulta [arquitectura y migración](docs/architecture.md).
+
+La interfaz de Fase D es provisional: no incluye una hoja CSS ni el diseño final de Fase I. El fondo blanco y los controles HTML actuales no indican un fallo cargando estilos. Registro, verificación y recuperación de correo requieren SMTP configurado en Keycloak; las pruebas usan un capturador local y cuentas ficticias.
 
 Para los endpoints de Fase B y OpenAPI, consulta [API local v1](docs/api-v1.md).
 

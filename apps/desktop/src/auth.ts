@@ -27,7 +27,7 @@ export function registerAuth(
 ) {
   const issuer = new URL(
     process.env.STRUCHKAI_OIDC_ISSUER ??
-      'http://127.0.0.1:8080/realms/struchkai',
+      'http://127.0.0.1:8083/realms/struchkai',
   );
   const api = new URL(process.env.STRUCHKAI_API_URL ?? 'http://127.0.0.1:3100');
   const local = (url: URL) =>

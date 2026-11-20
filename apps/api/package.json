@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "start": "node --env-file-if-exists=.env dist/main.js"
+    "start": "node --env-file-if-exists=.env --env-file-if-exists=../../.env dist/main.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.0",

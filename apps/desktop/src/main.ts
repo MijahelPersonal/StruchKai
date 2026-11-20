@@ -1,4 +1,5 @@
 import { registerAuth } from './auth.js';
+import { loadDesktopEnvironment } from './environment.js';
 import { app, BrowserWindow, session } from 'electron';
 import { fileURLToPath } from 'node:url';
 app.setName('StruchKai');
@@ -6,6 +7,8 @@ if (process.platform === 'win32')
   app.setAppUserModelId('com.struchkai.desktop');
 
 const smoke = process.argv.includes('--smoke');
+if (!app.isPackaged)
+  loadDesktopEnvironment(new URL('../../../.env', import.meta.url));
 const dev = !app.isPackaged && !smoke && process.argv.includes('--dev');
 const localUrl = 'http://127.0.0.1:5173';
 const renderer = fileURLToPath(
@@ -73,7 +76,16 @@ async function start() {
   }
 }
 
-void start().catch((error: unknown) => {
-  console.error(error);
-  app.exit(1);
+app.on('second-instance', () => {
+  const window = BrowserWindow.getAllWindows()[0];
+  if (window?.isMinimized()) window.restore();
+  window?.show();
+  window?.focus();
 });
+
+if (!smoke && !app.requestSingleInstanceLock()) app.quit();
+else
+  void start().catch((error: unknown) => {
+    console.error(error);
+    app.exit(1);
+  });
