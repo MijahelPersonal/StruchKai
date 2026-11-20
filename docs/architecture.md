@@ -51,3 +51,11 @@ La regresión OIDC usa un realm y una base de prueba separados. Keycloak conserv
 Electron permite cancelar un retorno pendiente y cierra el listener al aceptar el callback. Ante una interrupción transitoria de la renovación, conserva la credencial cifrada. La regresión OIDC cubre dos cuentas de Keycloak y un access token de vida corta.
 
 La prueba integral verifica persistencia de la credencial cifrada tras un fallo temporal, restauración al reiniciar y descarte tras revocación por Keycloak. La revocación local bloquea el acceso a la API desde el momento en que se registra.
+
+## Fase E
+
+`ProviderRegistry` descubre adaptadores de metadatos y publicaciones. El catálogo externo usa repositorios PostgreSQL sobre las tablas existentes; el catálogo y la biblioteca anteriores conservan sus rutas. `packages/domain` establece identidad solo mediante IDs declarados. Una asociación descubierta después no cambia los IDs de obras ya almacenadas ni mueve entradas de biblioteca: se informa `duplicateOf` y una futura reconciliación debe preservar las referencias existentes.
+
+El renderer consume contratos compartidos, mediante IPC acotado en Electron o REST en web. Solo el backend consulta fuentes: valida HTTPS/hosts/DNS, fija IP pública, rechaza redirecciones y aplica límites y caché independientes. Las portadas pasan por un proxy de hosts cerrados y llegan al renderer Electron como imágenes data; no se habilitó acceso libre del renderer a Internet. [Contratos, fuentes, condiciones, rutas y pruebas](providers.md).
+
+No hay sondeos programados, bot, lector de páginas ni reproductor definitivo. Las publicaciones no se equiparan a acceso autorizado. Antes de Fase F debe diseñarse la coordinación de cuotas entre procesos y respetar las políticas persistidas; los límites de esta fase son por instancia de API. Windows Hello físico de Fase D sigue pendiente y no bloqueó este trabajo.

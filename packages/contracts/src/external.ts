@@ -143,7 +143,12 @@ export function parseExternalQuery(
       !/^[1-9][0-9]*$/.test(raw) ||
       Number(raw) > max
     )
-      throw new ContractError('INVALID_PAGINATION', key + ' inválido');
+      throw new ContractError(
+        key === 'page' || key === 'limit'
+          ? 'INVALID_PAGINATION'
+          : 'INVALID_PARAMETERS',
+        key + ' inválido',
+      );
     return Number(raw);
   };
   const text = (key: string, max: number) => {
@@ -199,4 +204,88 @@ export function parseExternalId(provider: string, value: unknown): string {
       'Identificador externo inválido',
     );
   return id;
+}
+export type CatalogAction =
+  | 'providers'
+  | 'availability'
+  | 'genres'
+  | 'search'
+  | 'detail'
+  | 'refresh'
+  | 'releases'
+  | 'refreshReleases'
+  | 'cover';
+export interface CatalogInput {
+  provider?: string;
+  kind?: MediaKind;
+  id?: string;
+  query?: Record<string, string>;
+}
+export function catalogRequest(action: unknown, input: unknown = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input))
+    throw new ContractError(
+      'INVALID_PARAMETERS',
+      'Solicitud de catálogo inválida',
+    );
+  const values = input as Record<string, unknown>;
+  if (
+    Object.keys(values).some(
+      (key) => !['provider', 'kind', 'id', 'query'].includes(key),
+    )
+  )
+    throw new ContractError('INVALID_PARAMETERS', 'Campo no admitido');
+  if (action === 'providers')
+    return { path: '/v1/external/providers', method: 'GET', image: false };
+  const provider = parseId(values.provider);
+  if (action === 'availability')
+    return {
+      path: `/v1/external/providers/${provider}/availability`,
+      method: 'GET',
+      image: false,
+    };
+  const kind = parseMediaKind(values.kind);
+  if (action === 'genres')
+    return {
+      path: `/v1/external/${provider}/${kind}/genres`,
+      method: 'GET',
+      image: false,
+    };
+  if (action === 'search') {
+    const query = parseExternalQuery(values.query ?? {}, kind),
+      params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query))
+      if (key !== 'kind' && value !== undefined) params.set(key, String(value));
+    return {
+      path: `/v1/external/${provider}/${kind}/search?${params}`,
+      method: 'GET',
+      image: false,
+    };
+  }
+  const id = parseExternalId(provider, values.id),
+    path = `/v1/external/${provider}/${kind}/${id}`;
+  if (action === 'detail') return { path, method: 'GET', image: false };
+  if (action === 'refresh')
+    return { path: path + '/refresh', method: 'POST', image: false };
+  if (action === 'cover')
+    return { path: path + '/cover', method: 'GET', image: true };
+  if (action === 'releases' || action === 'refreshReleases') {
+    const query = parseExternalQuery(values.query ?? {}, kind),
+      params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query))
+      if (key !== 'kind' && value !== undefined) params.set(key, String(value));
+    return {
+      path:
+        path +
+        '/releases' +
+        (action === 'refreshReleases' ? '/refresh' : '') +
+        '?' +
+        params,
+      method: action === 'refreshReleases' ? 'POST' : 'GET',
+      image: false,
+    };
+  }
+  throw new ContractError(
+    'INVALID_PARAMETERS',
+    'Operación de catálogo desconocida',
+  );
 }

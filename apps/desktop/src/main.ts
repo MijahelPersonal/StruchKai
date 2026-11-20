@@ -1,4 +1,5 @@
 import { registerAuth } from './auth.js';
+import { registerCatalog } from './catalog.js';
 import { loadDesktopEnvironment } from './environment.js';
 import { app, BrowserWindow, session } from 'electron';
 import { fileURLToPath } from 'node:url';
@@ -38,8 +39,8 @@ async function start() {
     const headers = { ...details.responseHeaders };
     headers['Content-Security-Policy'] = [
       dev
-        ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:5173; object-src 'none'; base-uri 'none'"
-        : "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'",
+        ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:5173; object-src 'none'; base-uri 'none'"
+        : "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'",
     ];
     callback({ responseHeaders: headers });
   });
@@ -62,6 +63,12 @@ async function start() {
       ? localUrl + '/'
       : new URL('../../frontend/dist/index.html', import.meta.url).href,
     smoke,
+  );
+  registerCatalog(
+    window,
+    dev
+      ? localUrl + '/'
+      : new URL('../../frontend/dist/index.html', import.meta.url).href,
   );
   if (dev) await window.loadURL(localUrl);
   else await window.loadFile(renderer);

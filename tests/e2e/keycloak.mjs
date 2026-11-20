@@ -538,7 +538,10 @@ try {
     );
   }
   await window.getByRole('button', { name: 'Sesiones activas' }).click();
-  await window.getByText(/Actual/).waitFor();
+  await window
+    .locator('section[aria-label="Cuenta"]')
+    .getByText(/Actual/)
+    .waitFor();
   if (process.env.STRUCHKAI_TEST_SHORT_ACCESS === 'true') {
     assert.notEqual(
       await desktop.evaluate(() => globalThis.struchkaiTestBearer),
@@ -666,7 +669,10 @@ try {
     window = await desktop.firstWindow();
     await window.getByText(email, { exact: true }).waitFor({ timeout: 15000 });
     await window.getByRole('button', { name: 'Sesiones activas' }).click();
-    await window.getByText(/Actual/).waitFor();
+    await window
+      .locator('section[aria-label="Cuenta"]')
+      .getByText(/Actual/)
+      .waitFor();
     console.info(
       'Sesión restaurada tras reiniciar Electron con el mismo perfil temporal',
     );

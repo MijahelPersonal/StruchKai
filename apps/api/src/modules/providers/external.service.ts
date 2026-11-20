@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { setTimeout as pause } from 'node:timers/promises';
 import {
   ContractError,
   parseExternalId,
@@ -23,6 +24,12 @@ import { ExternalRepository } from './external.repository.js';
 
 @Injectable()
 export class ExternalService {
+  private readonly coverPending = new Map<
+    string,
+    Promise<{ bytes: Buffer; contentType: string }>
+  >();
+  private coverRequests: number[] = [];
+  private nextCover = 0;
   private readonly covers = new Map<
     string,
     { bytes: Buffer; contentType: string; expires: number }
@@ -59,6 +66,12 @@ export class ExternalService {
       return result;
     } catch (error) {
       if (error instanceof ProviderError) {
+        if (error.reason === 'invalid_query')
+          throw new ApiFailure(
+            400,
+            'INVALID_PARAMETERS',
+            'La fuente no admite los filtros o valores solicitados',
+          );
         adapter.descriptor.status = 'unavailable';
         adapter.transport.noteError(error.reason);
         await this.repository.provider(adapter, error.reason);
@@ -178,7 +191,7 @@ export class ExternalService {
       return await this.run(adapter, async () => {
         const title = await adapter.metadata!.getCatalogTitle!(kind, id, {
           signal: AbortSignal.timeout(10000),
-          region: refresh ? 'refresh' : undefined,
+          refresh,
         });
         if (!title)
           throw new ApiFailure(404, 'NOT_FOUND', 'Obra no encontrada');
@@ -216,6 +229,23 @@ export class ExternalService {
   ): Promise<ExternalPage<ExternalRelease>> {
     const query = parseExternalQuery(params, kindValue),
       adapter = this.adapter(provider);
+    if (
+      query.q ||
+      query.genre ||
+      query.year ||
+      query.season ||
+      query.status ||
+      query.sort !== 'relevance'
+    )
+      throw new ContractError(
+        'INVALID_PARAMETERS',
+        'Las publicaciones aceptan página, tamaño e idioma',
+      );
+    if (query.language && adapter.descriptor.id !== 'mangadex')
+      throw new ContractError(
+        'INVALID_PARAMETERS',
+        'La fuente no ofrece filtro de idioma para estas publicaciones',
+      );
     const externalId = parseExternalId(adapter.descriptor.id, id);
     const cached = await this.repository.cachedReleases(
       adapter.descriptor.id,
@@ -246,7 +276,7 @@ export class ExternalService {
         const result = await method(externalId, query, {
           signal: AbortSignal.timeout(10000),
           language: query.language,
-          region: refresh ? 'refresh' : undefined,
+          refresh,
         });
         result.items = result.items.map((item) => ({
           ...item,
@@ -287,11 +317,28 @@ export class ExternalService {
       throw new ApiFailure(404, 'NOT_FOUND', 'Portada no disponible');
     const cached = this.covers.get(title.coverUrl);
     if (cached && cached.expires > Date.now()) return cached;
-    try {
-      const result = await fetchProviderCover(
-        title.coverUrl,
-        AbortSignal.timeout(8000),
+    const pending = this.coverPending.get(title.coverUrl);
+    if (pending) return pending;
+    const now = Date.now();
+    this.coverRequests = this.coverRequests.filter(
+      (time) => now - time < 60000,
+    );
+    const wait = Math.max(0, this.nextCover - now);
+    if (this.coverRequests.length >= 60 || wait > 3000)
+      throw new ApiFailure(
+        503,
+        'PROVIDER_UNAVAILABLE',
+        'Límite de portadas alcanzado. Reintenta en unos segundos.',
       );
+    this.coverRequests.push(now);
+    this.nextCover = Math.max(now, this.nextCover) + 250;
+    const task = (async () => {
+      if (wait) await pause(wait);
+      return fetchProviderCover(title.coverUrl!, AbortSignal.timeout(8000));
+    })();
+    this.coverPending.set(title.coverUrl, task);
+    try {
+      const result = await task;
       if (this.covers.size >= 32)
         this.covers.delete(this.covers.keys().next().value!);
       this.covers.set(title.coverUrl, {
@@ -305,6 +352,8 @@ export class ExternalService {
         'PROVIDER_UNAVAILABLE',
         'Portada temporalmente no disponible',
       );
+    } finally {
+      this.coverPending.delete(title.coverUrl);
     }
   }
   playback(provider: unknown, episodeId: unknown): PlaybackOffer {

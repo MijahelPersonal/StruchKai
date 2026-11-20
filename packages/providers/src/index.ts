@@ -16,6 +16,7 @@ import {
 } from '@struchkai/contracts';
 export interface ProviderContext {
   signal: AbortSignal;
+  refresh?: boolean;
   language?: string;
   region?: string;
 }

@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { createDatabase, requireLocalAdminUrl } from '@struchkai/database';
-import { createRemoteProvider, normalizeMangaDex } from '@struchkai/providers';
+import {
+  createRemoteProvider,
+  normalizeMangaDex,
+  normalizeJikan,
+} from '@struchkai/providers';
 import type { ExternalRelease, ExternalQuery } from '@struchkai/contracts';
 import { ExternalRepository } from '../../apps/api/src/modules/providers/external.repository.ts';
 
@@ -43,7 +47,47 @@ test(
           tags: [],
         },
       });
+      const mal = String(parseInt(externalId.slice(0, 8), 16));
+      title.externalIds.mal = mal;
       const saved = await repository.save({ ...title, complete: true });
+      await repository.provider(createRemoteProvider('jikan'));
+      const related = await repository.save(
+        normalizeJikan(
+          {
+            mal_id: Number(mal),
+            title: 'Título alternativo de la misma obra',
+            status: 'Publishing',
+          },
+          'manga',
+        ),
+      );
+      assert.equal(related.id, saved.id);
+      assert.equal(related.duplicateOf, saved.id);
+      // A link learned later must not move an existing library identity.
+      const second = normalizeMangaDex({
+        id: randomUUID(),
+        attributes: {
+          title: { en: 'Asociación conocida más tarde' },
+          status: 'ongoing',
+        },
+      });
+      const before = await repository.save(second);
+      const secondMal = String(Number(mal) + 1);
+      const independentlyStored = await repository.save(
+        normalizeJikan(
+          { mal_id: Number(secondMal), title: 'Referencia independiente' },
+          'manga',
+        ),
+      );
+      second.externalIds.mal = secondMal;
+      const after = await repository.save(second);
+      assert.equal(after.id, before.id);
+      assert.equal(after.duplicateOf, independentlyStored.id);
+      assert.equal(
+        (await repository.cached('mangadex', 'manga', second.source.externalId))
+          ?.id,
+        before.id,
+      );
       assert.equal(saved.year, null);
       const release: ExternalRelease = {
         id: 'mangadex-chapter-' + randomUUID(),

@@ -1,4 +1,5 @@
 import { Account } from './Account.js';
+import { Catalog } from './Catalog.js';
 import { createRoot } from 'react-dom/client';
 
 const root = document.getElementById('root');
@@ -8,5 +9,6 @@ createRoot(root).render(
     <h1>StruchKai</h1>
     <p>Biblioteca de anime y manga</p>
     <Account />
+    <Catalog />
   </main>,
 );

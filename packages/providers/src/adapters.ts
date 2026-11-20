@@ -112,13 +112,20 @@ const source = (provider: string, externalId: string, url: string) => ({
   url,
   fetchedAt: new Date().toISOString(),
 });
+function responseId(provider: string, id: string) {
+  try {
+    parseExternalId(provider, id);
+  } catch {
+    throw new ProviderError('invalid_response');
+  }
+}
 function base(
   provider: string,
   kind: MediaKind,
   externalId: string,
   url: string,
 ): ExternalTitle {
-  parseExternalId(provider, externalId);
+  responseId(provider, externalId);
   return {
     id: `${provider}-${kind}-${externalId}`,
     kind,
@@ -277,6 +284,56 @@ export function normalizeKitsu(
   title.episodeCount = number(attr.episodeCount);
   title.chapterCount = number(attr.chapterCount);
   title.externalIds.kitsu = id;
+  const mappings = list(object(object(item.relationships).mappings).data).map(
+    (value) => object(value).id,
+  );
+  for (const mapping of included
+    .map(object)
+    .filter(
+      (value) => value.type === 'mappings' && mappings.includes(value.id),
+    )) {
+    const attributes = object(mapping.attributes),
+      externalId = string(attributes.externalId);
+    if (
+      attributes.externalSite === `myanimelist/${kind}` &&
+      externalId &&
+      /^[1-9][0-9]*$/.test(externalId)
+    )
+      title.externalIds.mal = externalId;
+  }
+  const relationships = list(
+    object(object(item.relationships).mediaRelationships).data,
+  ).map((value) => object(value).id);
+  title.relations = included
+    .map(object)
+    .filter(
+      (value) =>
+        value.type === 'mediaRelationships' && relationships.includes(value.id),
+    )
+    .flatMap((value) => {
+      const destination = object(
+          object(object(value.relationships).destination).data,
+        ),
+        type = destination.type;
+      if ((type !== 'anime' && type !== 'manga') || !string(destination.id))
+        return [];
+      const target = included
+        .map(object)
+        .find((record) => record.id === destination.id && record.type === type);
+      return [
+        {
+          type: string(object(value.attributes).role) ?? 'related',
+          title: string(object(target?.attributes).canonicalTitle),
+          provider: 'kitsu',
+          externalId: String(destination.id),
+          kind: type,
+        },
+      ];
+    });
+  if (kind === 'anime' && start)
+    title.season = (['winter', 'spring', 'summer', 'fall'] as const)[
+      Math.floor((Number(start.slice(5, 7)) - 1) / 3)
+    ];
   const refs = list(object(object(item.relationships).categories).data)
     .map(object)
     .map((value) => value.id);
@@ -351,11 +408,24 @@ export function createRemoteProvider(
         context.signal,
         body,
         300,
-        context.region === 'refresh',
+        context.refresh === true,
       ),
     );
   };
   const check = (kind: MediaKind, query?: ExternalQuery) => {
+    if (provider === 'kitsu' && query && query.limit > 20)
+      throw new ContractError(
+        'INVALID_PAGINATION',
+        'Kitsu admite hasta 20 resultados por página',
+      );
+    if (query?.genre) {
+      if (provider === 'mangadex') parseExternalId('mangadex', query.genre);
+      else if (provider === 'jikan' && !/^[1-9][0-9]*$/.test(query.genre))
+        throw new ContractError(
+          'INVALID_PARAMETERS',
+          'Jikan requiere un identificador numérico de género',
+        );
+    }
     if (provider === 'mangadex' && kind !== 'manga')
       throw new ProviderError('unsupported');
     if (query?.season && (provider === 'mangadex' || kind === 'manga'))
@@ -394,8 +464,13 @@ export function createRemoteProvider(
     page: query.page,
     limit: query.limit,
     total,
-    hasNextPage: more,
-    warnings: [],
+    hasNextPage: more && query.page < 400,
+    warnings:
+      more && query.page >= 400
+        ? [
+            'Se alcanzó el límite de 400 páginas. Acota la búsqueda o usa un tamaño de página mayor.',
+          ]
+        : [],
   });
   const search = async (
     query: ExternalQuery,
@@ -509,7 +584,7 @@ export function createRemoteProvider(
         'filter[status]': query.status ? states[query.status] : undefined,
         'page[limit]': query.limit,
         'page[offset]': (query.page - 1) * query.limit,
-        include: 'categories',
+        include: 'categories,mappings',
         sort:
           query.sort === 'title'
             ? 'id'
@@ -609,7 +684,7 @@ export function createRemoteProvider(
         );
       if (provider === 'kitsu') {
         const result = await call(`/${kind}/${id}`, context, {
-          include: 'categories',
+          include: 'categories,mappings,mediaRelationships.destination',
         });
         return normalizeKitsu(result.data, kind, list(result.included));
       }
@@ -635,6 +710,11 @@ export function createRemoteProvider(
     query: ExternalQuery,
     context: ProviderContext,
   ): Promise<ExternalPage<ExternalRelease>> => {
+    if (provider === 'kitsu' && query.limit > 20)
+      throw new ContractError(
+        'INVALID_PAGINATION',
+        'Kitsu admite hasta 20 publicaciones por página',
+      );
     parseExternalId(provider, id);
     if (provider === 'jikan' && query.kind === 'anime') {
       const result = await call(`/anime/${id}/episodes`, context, {
@@ -646,7 +726,7 @@ export function createRemoteProvider(
       const items = result.data.map((raw) => {
         const item = object(raw);
         const episode = String(item.mal_id);
-        parseExternalId('jikan', episode);
+        responseId('jikan', episode);
         const aired = timestamp(item.aired);
         return {
           id: `jikan-episode-${id}-${episode}`,
@@ -700,7 +780,7 @@ export function createRemoteProvider(
         const item = object(raw),
           attr = object(item.attributes),
           chapter = String(item.id);
-        parseExternalId('mangadex', chapter);
+        responseId('mangadex', chapter);
         const published = timestamp(attr.publishAt);
         return {
           id: `mangadex-chapter-${chapter}`,
@@ -751,7 +831,7 @@ export function createRemoteProvider(
         const item = object(raw),
           attr = object(item.attributes),
           episode = String(item.id);
-        parseExternalId('kitsu', episode);
+        responseId('kitsu', episode);
         const aired = timestamp(attr.airdate);
         return {
           id: `kitsu-episode-${episode}`,
@@ -913,7 +993,7 @@ export function createRemoteProvider(
               (
                 await releases(
                   id.replace(/^(jikan|kitsu)-anime-/, ''),
-                  { kind: 'anime', page: 1, limit: 25, sort: 'relevance' },
+                  { kind: 'anime', page: 1, limit: 20, sort: 'relevance' },
                   context,
                 )
               ).items

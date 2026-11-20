@@ -6,6 +6,14 @@ contextBridge.exposeInMainWorld(
 );
 
 contextBridge.exposeInMainWorld(
+  'struchkaiCatalog',
+  Object.freeze({
+    run: (action: string, input?: unknown) =>
+      ipcRenderer.invoke('struchkai:catalog', action, input),
+  }),
+);
+
+contextBridge.exposeInMainWorld(
   'struchkaiAuth',
   Object.freeze({
     run: (action: string, value?: unknown) =>

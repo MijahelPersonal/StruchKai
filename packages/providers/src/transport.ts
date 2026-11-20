@@ -1,4 +1,5 @@
 import { lookup } from 'node:dns/promises';
+import type { LookupAddress } from 'node:dns';
 import { request } from 'node:https';
 import { isIP } from 'node:net';
 
@@ -9,6 +10,7 @@ export class ProviderError extends Error {
       | 'offline'
       | 'rate_limited'
       | 'invalid_response'
+      | 'invalid_query'
       | 'not_found'
       | 'unsupported'
       | 'policy',
@@ -48,7 +50,9 @@ export function validateProviderUrl(value: string): URL {
 }
 export function publicAddress(ip: string): boolean {
   if (isIP(ip) === 6)
-    return /^[23][0-9a-f]{3}:/i.test(ip) && !/^2001:(db8|0|10|20):/i.test(ip);
+    return (
+      /^[23][0-9a-f]{3}:/i.test(ip) && !/^2001:(db8|0|10|20):|^2002:/i.test(ip)
+    );
   if (isIP(ip) !== 4) return false;
   const [a, b, c] = ip.split('.').map(Number);
   return (
@@ -87,7 +91,14 @@ async function pinnedRequest(
     url.hash
   )
     throw new ProviderError('policy');
-  const addresses = await lookup(url.hostname, { all: true });
+  const addresses = await new Promise<LookupAddress[]>((resolve, reject) => {
+    signal.throwIfAborted();
+    const abort = () => reject(new ProviderError('timeout'));
+    signal.addEventListener('abort', abort, { once: true });
+    lookup(url.hostname, { all: true })
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', abort));
+  });
   if (
     !addresses.length ||
     addresses.some((item) => !publicAddress(item.address))
@@ -293,6 +304,8 @@ export class ProviderTransport {
           );
         }
         if (reply.status === 404) throw new ProviderError('not_found');
+        if (reply.status === 400 || reply.status === 422)
+          throw new ProviderError('invalid_query');
         if (reply.status >= 500 && attempt === 0) {
           await this.pause(250, signal);
           continue;
@@ -312,6 +325,8 @@ export class ProviderTransport {
         error instanceof ProviderError
           ? error
           : new ProviderError(signal.aborted ? 'timeout' : 'offline');
+      if (failure.reason === 'invalid_query' || failure.reason === 'not_found')
+        throw failure;
       this.lastFailure = new Date(this.now()).toISOString();
       this.lastError = failure.reason;
       if (++this.failures >= 3)

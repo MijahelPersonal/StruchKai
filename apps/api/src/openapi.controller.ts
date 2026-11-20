@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
+import { externalOpenApi } from './modules/providers/external.openapi.js';
 import {
   errorCodes,
   mediaKinds,
@@ -21,7 +22,7 @@ const title = {
   id,
   title: string,
   synopsis: string,
-  year: integer,
+  year: { ...integer, nullable: true },
   genres: array(ref('Genre')),
 };
 const kind = { ...string, enum: mediaKinds };
@@ -325,6 +326,13 @@ const document = {
 @Controller('v1')
 export class OpenApiController {
   @Get('openapi.json') specification() {
-    return document;
+    return {
+      ...document,
+      paths: { ...document.paths, ...externalOpenApi.paths },
+      components: {
+        ...document.components,
+        schemas: { ...document.components.schemas, ...externalOpenApi.schemas },
+      },
+    };
   }
 }

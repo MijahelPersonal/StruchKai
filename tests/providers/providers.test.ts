@@ -218,6 +218,22 @@ test('429 respeta Retry-After y no reintenta contra el bloqueo', async () => {
   assert.equal(calls, 1);
   assert.equal(transport.status().lastError, 'rate_limited');
 });
+test('Un filtro rechazado por la fuente no se confunde con una caída ni abre el circuito', async () => {
+  const transport = new ProviderTransport(0, 100, async () => ({
+    status: 400,
+    headers: {},
+    body: { error: 'invalid filter' },
+  }));
+  await assert.rejects(
+    transport.json(
+      'https://api.jikan.moe/v4/anime?q=Test',
+      AbortSignal.timeout(1000),
+    ),
+    (error) =>
+      error instanceof ProviderError && error.reason === 'invalid_query',
+  );
+  assert.equal(transport.status().lastError, null);
+});
 test('Timeout acotado incluso si el transporte ignora AbortSignal', async () => {
   const transport = new ProviderTransport(
     0,

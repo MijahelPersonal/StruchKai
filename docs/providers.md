@@ -34,9 +34,13 @@ MangaDex exige atribución, crédito a los grupos si se muestran sus capítulos 
 
 Un ID declarado por la fuente identifica la obra. Las asociaciones entre fuentes solo usan identificadores explícitos, como MAL; nunca se fusionan obras por coincidencia parcial del título. El primer ID local confirmado permanece estable. Los títulos parecidos sin una asociación comprobada permanecen separados. Las cantidades totales no generan episodios o capítulos artificiales.
 
+Kitsu incorpora sus mappings declarados a MyAnimeList y sus relaciones de obras. Se comprueba que cada mapping pertenece al recurso consultado y que corresponde al mismo tipo, anime o manga. Si dos obras ya fueron almacenadas antes de conocer su asociación, se conservan sus IDs y se devuelve `duplicateOf`: no se cambian las referencias existentes ni se eliminan entradas de biblioteca.
+
 Cada publicación distingue anunciado, publicado o desconocido. Todas las fuentes actuales devuelven `playback=unavailable`: una fecha de emisión o un capítulo en un índice no concede derechos de reproducción. `PlaybackProvider` sigue disponible para futuros adaptadores autorizados y el DTO `PlaybackOffer` incluye acceso, formato, idioma y modo de entrega.
 
 Los filtros son específicos de la fuente. MangaDex no permite año ni temporada en esta consulta; se rechazan en lugar de fingir filtrado. El filtro anual y estacional de Kitsu se limita a anime. Su orden remoto por título devolvió HTTP 500 durante la validación: se pagina de manera estable por ID y se ordena por título **solo la página actual**, con advertencia explícita. Año y actualización usan orden de origen. Jikan no permite orden por actualización; su endpoint estacional no combina los filtros de búsqueda, género y estado. Las páginas de episodios Jikan tienen 100 elementos fijados por origen y se informa ese límite real.
+
+Kitsu se limita conservadoramente a 20 elementos por página. La API común limita las consultas a 400 páginas y deja de ofrecer `hasNextPage` al alcanzar ese máximo, con advertencia para acotar la búsqueda. MangaDex también impone su ventana máxima de 10 000 resultados. La temporada mostrada para Kitsu se deriva del trimestre de su fecha de inicio informada, no de un campo de temporada inventado.
 
 ## Persistencia y resiliencia
 
@@ -48,8 +52,26 @@ Cada adaptador tiene presupuesto independiente: Jikan 50/minuto con separación 
 
 La caché normalizada y las páginas de publicaciones duran cinco minutos. La caché de páginas es exacta por idioma, página y tamaño, con un máximo de diez páginas por asociación: nunca presenta una colección parcial como listado completo. Un fallo permite recuperar metadatos/páginas caducados con aviso; una actualización manual informa el fallo y no borra el último resultado válido. La biblioteca local no necesita que una fuente esté disponible. Los logs y la persistencia de errores no contienen tokens ni credenciales.
 
+Las portadas tienen caché acotada, deduplicación, separación de 250 ms y presupuesto de 60 descargas por minuto, independiente de la biblioteca y la autenticación. Los HTTP 400/422 de una fuente se convierten en errores de filtros, no en falsas caídas del proveedor. Los errores al actualizar una ficha vencen su caché para que el siguiente acceso no la presente como recién consultada.
+
+## Interfaz mínima y OpenAPI
+
+En Electron abre **Buscar anime y manga en fuentes externas**. Para anime selecciona Kitsu y busca **Cowboy Bebop**. Abre la ficha, revisa sus relaciones y usa **Más publicaciones**. Para manga selecciona MangaDex y busca **Blue Period**; abre su ficha y selecciona **Inglés → Consultar capítulos**. Una consulta sin capítulos en español no se reemplaza por datos ficticios. **Actualizar ficha y publicaciones** y **Actualizar publicaciones** son operaciones manuales sujetas a las mismas cuotas.
+
+La UI permite título/alternativas, género, año/temporada de anime, estado, orden y paginación. **Cargar géneros** consulta bajo demanda; Kitsu ofrece una primera página de categorías y también permite escribir el slug. Se muestran procedencia, IDs, fechas, caché caducada, errores con requestId y créditos. El diseño sigue siendo provisional; no se implementó Fase I.
+
+`GET /v1/openapi.json` incluye los nuevos paths y los esquemas ExternalTitle, ExternalRelease, ExternalProvider, ProviderAvailability y PlaybackOffer, además de los contratos anteriores. La prueba de catálogo usa un backend de fixtures tanto en web como en Electron compilado, incluido CSP de imágenes y rechazo de solicitudes IPC arbitrarias. El puente solo ofrece `run` con operaciones cerradas y valida emisor/frame; no expone tokens, shell, filesystem ni URLs arbitrarias.
+
 ## Pruebas
 
 `npm run test:providers` usa fixtures y PostgreSQL local cuando están definidas `STRUCHKAI_TEST_DATABASE_URL` y `STRUCHKAI_TEST_APP_URL`. Incluye contratos, identidad, normalización, paginación, caché, límites, timeout, caída y persistencia tras reconectar. `npm run test:providers:live` consulta cantidades pequeñas y bajo demanda en APIs reales; escribe evidencia sin secretos en `.struchkai-local/providers-live.json`. Un fallo de Jikan se informa por separado; no se convierte en aprobación simulada.
+
+`npm run test:catalog` verifica web y Electron con fixtures, sin llamadas externas. `npm run test:catalog:live` necesita NestJS en 3100 y React en 5173 activos; consulta Kitsu/MangaDex, comprueba la ficha real, imágenes, relaciones y capítulos en inglés, y deja capturas locales excluidas de Git. La opción `-- --keep-open` usa el perfil normal y deja la ventana visible; cierra primero la instancia normal existente. `npm test` y `test:providers` también ejecutan un escenario de caché caducada y fallos en el servicio, sin consultas externas.
+
+## Estado y siguiente fase
+
+El backend y la interfaz de Fase E están implementados y verificados con Kitsu y MangaDex. Jikan tiene contrato y adaptador probados con fixtures y sigue pendiente de validación funcional real por timeout de conexión. AniList está preparado, sin activar ni consultar, según la decisión explícita del usuario. No se declara operativa ninguna de esas dos integraciones pendientes.
+
+La base está preparada para planificar la Fase F mediante registro modular, políticas, mappings y publicaciones persistidas. No se inició la Fase F: antes de automatizar deben acordarse fuentes habilitadas, cuotas compartidas, deduplicación de trabajos, reintentos y permisos de consulta periódica. No se desarrollaron historial/progreso ni reproducción de Fase G, APK o rediseño de Fase I.
 
 La auditoría de referencia se basó en los informes `docs/vault/10-modulos/backend-scraping-anime.md` y `backend-manga.md` de MapleVault: se preservaron consulta bajo demanda, identidad estricta, paginación, idiomas, caché y degradación independiente. El proyecto original permanece intacto.

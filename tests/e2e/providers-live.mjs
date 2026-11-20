@@ -12,7 +12,7 @@ for (const [provider, kind, q] of [
   try {
     const context = { signal: AbortSignal.timeout(10000) };
     const search = await adapter.metadata.searchCatalog(
-      { kind, q, page: 1, limit: 2, sort: 'relevance' },
+      { kind, q, page: 1, limit: 5, sort: 'relevance' },
       context,
     );
     assert.ok(search.items.length);

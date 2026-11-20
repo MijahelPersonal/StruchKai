@@ -74,14 +74,20 @@ export class ExternalRepository {
       bridge = sql.identifier(title.kind + '_genres');
     return this.connection.db.transaction(async (tx) => {
       const identity = workIdentity(title);
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`mapping:${key}`},0))`,
+      );
       // Serializes the verified external identity, including cross-provider imports.
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${identity},0))`,
       );
       const mapped = await tx.execute<{ id: string; slug: string }>(
-        sql`SELECT w.id,w.slug FROM provider_mappings m JOIN ${work} w ON w.id=m.${fk} WHERE m.identity_key=${identity} LIMIT 1`,
+        sql`SELECT w.id,w.slug FROM provider_mappings m JOIN ${work} w ON w.id=m.${fk} WHERE m.identity_key=${identity} ORDER BY w.created_at,w.slug LIMIT 1`,
       );
-      let local = mapped.rows[0];
+      const own = await tx.execute<{ id: string; slug: string }>(
+        sql`SELECT w.id,w.slug FROM provider_mappings m JOIN ${work} w ON w.id=m.${fk} JOIN providers p ON p.id=m.provider_id WHERE p.slug=${title.source.provider} AND m.namespace=${title.kind} AND m.external_id=${title.source.externalId}`,
+      );
+      let local = own.rows[0] ?? mapped.rows[0];
       if (!local) {
         const result = await tx.execute<{ id: string; slug: string }>(
           sql`INSERT INTO ${work}(slug,title,search_title,synopsis,year) VALUES(${title.id},${title.title},${title.title.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()},${title.synopsis ?? ''},${title.year}) ON CONFLICT(slug) DO UPDATE SET title=excluded.title,search_title=excluded.search_title,synopsis=excluded.synopsis,year=excluded.year RETURNING id,slug`,
@@ -91,7 +97,12 @@ export class ExternalRepository {
       const normalized: ExternalTitle = {
         ...title,
         id: local.slug,
-        duplicateOf: local.slug === title.id ? undefined : local.slug,
+        duplicateOf:
+          own.rows[0] && mapped.rows[0] && mapped.rows[0].id !== own.rows[0].id
+            ? mapped.rows[0].slug
+            : local.slug === title.id
+              ? undefined
+              : local.slug,
         cache: { stale: false, expiresAt },
       };
       if (title.id === local.slug)
@@ -106,7 +117,8 @@ export class ExternalRepository {
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '')
-          .slice(0, 80);
+          .slice(0, 80)
+          .replace(/-$/, '');
         if (!slug) continue;
         const result = await tx.execute<{ id: string }>(
           sql`INSERT INTO genres(slug,name) VALUES(${slug},${genre.name}) ON CONFLICT(slug) DO UPDATE SET name=excluded.name RETURNING id`,
@@ -158,7 +170,7 @@ export class ExternalRepository {
   async failure(provider: string, kind: MediaKind, id: string, error: string) {
     if (this.connection)
       await this.connection.db.execute(
-        sql`UPDATE provider_mappings m SET last_error=${error} FROM providers p WHERE p.id=m.provider_id AND p.slug=${provider} AND m.namespace=${kind} AND m.external_id=${id}`,
+        sql`UPDATE provider_mappings m SET last_error=${error},expires_at=least(now(),m.expires_at) FROM providers p WHERE p.id=m.provider_id AND p.slug=${provider} AND m.namespace=${kind} AND m.external_id=${id}`,
       );
   }
   private pageKey(query: ExternalQuery) {
