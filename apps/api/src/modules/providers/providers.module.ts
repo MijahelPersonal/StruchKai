@@ -1,6 +1,8 @@
 import { Controller, Get, Module, Param } from '@nestjs/common';
 import { parseId } from '@struchkai/contracts';
-import { ProviderRegistry } from '@struchkai/providers';
+import { ProviderRegistry, createRemoteProvider } from '@struchkai/providers';
+import { ExternalController } from './external.controller.js';
+import { ExternalService } from './external.service.js';
 import { ApiFailure } from '../../http.js';
 import { animeFixtures, mangaFixtures } from '../catalog/fixtures.js';
 function fixtureRegistry() {
@@ -50,6 +52,8 @@ function fixtureRegistry() {
       usagePolicy: policy,
     },
   });
+  for (const provider of ['jikan', 'mangadex', 'kitsu', 'anilist'] as const)
+    registry.register(createRemoteProvider(provider));
   return registry;
 }
 @Controller('v1/providers')
@@ -72,7 +76,10 @@ class ProvidersController {
   }
 }
 @Module({
-  controllers: [ProvidersController],
-  providers: [{ provide: ProviderRegistry, useFactory: fixtureRegistry }],
+  controllers: [ProvidersController, ExternalController],
+  providers: [
+    { provide: ProviderRegistry, useFactory: fixtureRegistry },
+    ExternalService,
+  ],
 })
 export class ProvidersModule {}

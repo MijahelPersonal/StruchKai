@@ -56,7 +56,7 @@ export class PostgresCatalogRepository extends CatalogRepository {
    page_rows AS (SELECT * FROM matches ORDER BY slug LIMIT ${query.limit} OFFSET ${(query.page - 1) * query.limit})
    SELECT w.slug AS id,w.title,w.synopsis,w.year,
      coalesce((SELECT jsonb_agg(jsonb_build_object('id',g.slug,'name',g.name) ORDER BY g.slug) FROM ${bridge} b JOIN genres g ON g.id=b.genre_id WHERE b.${parent}=w.id),'[]') AS genres,
-     coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.slug,'number',d.number,'title',d.title) ORDER BY d.number,d.slug) FROM ${delivery} d WHERE d.${parent}=w.id),'[]') AS deliveries,
+     coalesce((SELECT jsonb_agg(jsonb_build_object('id',d.slug,'number',d.number,'title',d.title) ORDER BY d.number,d.slug) FROM ${delivery} d WHERE d.${parent}=w.id AND d.number IS NOT NULL),'[]') AS deliveries,
      counts.total FROM (SELECT count(*)::int AS total FROM matches) counts LEFT JOIN page_rows w ON true ORDER BY w.slug
   `);
     const total = result.rows[0]?.total ?? 0;

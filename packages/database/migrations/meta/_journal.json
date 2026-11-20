@@ -15,6 +15,20 @@
       "when": 1794500100000,
       "tag": "0001_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795200000000,
+      "tag": "0002_external_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795200100000,
+      "tag": "0003_release_cache",
+      "breakpoints": true
     }
   ]
 }

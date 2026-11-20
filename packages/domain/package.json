@@ -7,6 +7,9 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@struchkai/contracts": "0.0.0"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

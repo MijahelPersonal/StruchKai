@@ -88,7 +88,27 @@ test(
     await checkError('/v1/anime?q=a&q=b', 400, 'INVALID_PARAMETERS');
     await checkError('/v1/manga/unknown', 404, 'NOT_FOUND');
     await checkError('/v1/manga/not_valid', 400, 'INVALID_PARAMETERS');
-    assert.equal((await (await call('/v1/providers')).json()).length, 2);
+    const providers = await (await call('/v1/providers')).json();
+    assert.equal(
+      providers.some(
+        (provider: { id: string }) => provider.id === 'fixture-catalog',
+      ),
+      true,
+    );
+    assert.equal(
+      providers.some((provider: { id: string }) => provider.id === 'mangadex'),
+      true,
+    );
+    await checkError(
+      '/v1/external/anilist/anime/search?q=Test',
+      403,
+      'OPERATION_NOT_ALLOWED',
+    );
+    await checkError(
+      '/v1/external/jikan/anime/search?page=0',
+      400,
+      'INVALID_PAGINATION',
+    );
     await checkError(
       '/v1/providers/fixture-offline',
       503,

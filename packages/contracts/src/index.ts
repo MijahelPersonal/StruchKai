@@ -1,3 +1,4 @@
+export * from './external.js';
 export type EntityId = string;
 export const mediaKinds = ['anime', 'manga'] as const;
 export type MediaKind = (typeof mediaKinds)[number];
@@ -39,7 +40,7 @@ interface Title {
   title: string;
   synopsis: string;
   genres: readonly Genre[];
-  year: number;
+  year: number | null;
 }
 export interface Episode {
   id: EntityId;
