@@ -392,6 +392,125 @@ try {
   console.info(
     'Registro, SMTP, TOTP, PKCE y GET /v1/account comprobados con Electron y Keycloak real',
   );
+  if (process.env.STRUCHKAI_TEST_UPDATE_PROFILE !== 'false') {
+    const expected = {
+      firstName: 'Perfil actualizado',
+      lastName: 'Prueba local',
+    };
+    const actor = await currentAccount();
+    const readUserInfo = () =>
+      desktop.evaluate(async (_electron, issuer) => {
+        const result = await fetch(
+          issuer + '/protocol/openid-connect/userinfo',
+          { headers: { Authorization: globalThis.struchkaiTestBearer } },
+        );
+        if (!result.ok) throw new Error('UserInfo no disponible');
+        return result.json();
+      }, issuer);
+    const beginProfile = async (action = 'UPDATE_PROFILE') => {
+      await window.getByRole('button', { name: 'Cerrar sesión' }).click();
+      await window
+        .getByRole('button', { name: 'Iniciar sesión', exact: true })
+        .waitFor();
+      await page.context().clearCookies();
+      await open('Iniciar sesión', action);
+      await page.locator('#authenticateWebAuthnButton').waitFor();
+      await page.locator('[name=username]').fill(email);
+      await page.locator('[name=password]').fill(password);
+      await page.locator('form [type=submit]').first().click();
+      await new Promise((resolve) =>
+        setTimeout(resolve, 30500 - (Date.now() % 30000)),
+      );
+      const input = page.locator('[name=otp]');
+      await input.fill(totp(secret));
+      await input
+        .locator('xpath=ancestor::form')
+        .locator('[type=submit]')
+        .click();
+      await page
+        .locator(
+          action === 'UPDATE_PROFILE'
+            ? '[name=firstName]'
+            : '#registerWebAuthn',
+        )
+        .waitFor();
+    };
+    await beginProfile();
+    await page.locator('[name=firstName]').fill('');
+    const form = page
+      .locator('[name=firstName]')
+      .locator('xpath=ancestor::form');
+    await form.evaluate((element) => {
+      element.noValidate = true;
+      element.requestSubmit();
+    });
+    await page.locator('#input-error-firstName').waitFor();
+    assert.equal(
+      new URL(page.url()).searchParams.get('execution'),
+      'UPDATE_PROFILE',
+    );
+    await page.locator('[name=firstName]').fill(expected.firstName);
+    await page.locator('[name=lastName]').fill(expected.lastName);
+    await form.locator('[type=submit]').first().click();
+    await window.getByText(email, { exact: true }).waitFor();
+    const userInfo = await readUserInfo();
+    assert.equal(userInfo.given_name, expected.firstName);
+    assert.equal(userInfo.family_name, expected.lastName);
+    assert.equal((await currentAccount()).profileId, actor.profileId);
+    await beginProfile();
+    assert.equal(
+      await page.locator('[name=firstName]').inputValue(),
+      expected.firstName,
+    );
+    assert.equal(
+      await page.locator('[name=lastName]').inputValue(),
+      expected.lastName,
+    );
+    await page.locator('[name=firstName]').fill('Cambio cancelado');
+    const cancel = page.locator('[name=cancel-aia]');
+    await cancel.click();
+    await window.getByText(email, { exact: true }).waitFor();
+    assert.equal((await currentAccount()).profileId, actor.profileId);
+    const afterCancel = await readUserInfo();
+    assert.equal(afterCancel.given_name, expected.firstName);
+    assert.equal(afterCancel.family_name, expected.lastName);
+    console.info(
+      'UPDATE_PROFILE: validación, guardado, persistencia, cancelación y retorno a Electron comprobados',
+    );
+  }
+  if (process.env.STRUCHKAI_TEST_UPDATE_PROFILE !== 'false') {
+    await window.getByRole('button', { name: 'Cerrar sesión' }).click();
+    await window
+      .getByRole('button', { name: 'Iniciar sesión', exact: true })
+      .waitFor();
+    await page.context().clearCookies();
+    await open('Iniciar sesión', 'webauthn-register-passwordless');
+    await page.locator('#authenticateWebAuthnButton').waitFor();
+    await page.locator('[name=username]').fill(email);
+    await page.locator('[name=password]').fill(password);
+    await page.locator('form [type=submit]').first().click();
+    await new Promise((resolve) =>
+      setTimeout(resolve, 30500 - (Date.now() % 30000)),
+    );
+    await page.locator('[name=otp]').fill(totp(secret));
+    await page
+      .locator('[name=otp]')
+      .locator('xpath=ancestor::form')
+      .locator('[type=submit]')
+      .click();
+    await page.locator('#registerWebAuthn').waitFor();
+    const policy = await page.locator('script[type=module]').allTextContents();
+    const source = policy.join('\n');
+    assert.match(source, /residentKey\s*:\s*"required"/);
+    assert.match(source, /userVerificationRequirement\s*:\s*"required"/);
+    assert.match(source, /signatureAlgorithms\s*:\s*\[\s*-7,\s*-257,/);
+    assert.match(source, /rpId\s*:\s*"127\.0\.0\.1"/);
+    await page.locator('#cancelWebAuthnAIA').click();
+    await window.getByText(email, { exact: true }).waitFor();
+    console.info(
+      'Passkeys habilitadas y política WebAuthn real comprobadas; Windows Hello físico pendiente',
+    );
+  }
   const oldBearer = await desktop.evaluate(
     () => globalThis.struchkaiTestBearer,
   );

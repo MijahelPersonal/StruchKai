@@ -59,6 +59,25 @@ Esta comprobación queda manual porque requiere el autenticador de plataforma y 
 4. Cierra sesión en StruchKai y en Keycloak. Vuelve a **Iniciar sesión** desde Electron y elige la passkey en Edge. Confirma que Electron muestra el mismo perfil. Si la opción no aparece, revisa el flujo de navegador y la política de passkeys de Keycloak.
 5. Elimina la passkey en **Signing in**, vuelve a cerrar ambas sesiones e intenta usar la misma credencial. Confirma que Keycloak rechaza el acceso con esa credencial y que la cuenta todavía admite TOTP. Si Edge conserva una entrada en el selector, el resultado determinante es el rechazo del servidor.
 
+### Configuración y evidencia de cierre · 20 de noviembre de 2026
+
+El JSON del realm activa explícitamente `webAuthnPolicyPasswordlessPasskeysEnabled`, permite ES256 y RS256 y exige `residentKey=required` y `userVerification=required`. El RP ID se deriva del hostname de Keycloak: conserva exactamente el mismo hostname durante registro, acceso y eliminación. No alternes localhost y 127.0.0.1. En despliegues usa HTTPS y un dominio estable. Referencia de los campos: [API oficial de Keycloak](https://www.keycloak.org/docs-api/26.8.1/rest-api/index.html).
+
+Una importación de arranque no actualiza un realm existente. Para el ensayo automático genera el fixture e impórtalo en almacenamiento de prueba nuevo. Para el ensayo físico en un realm ya existente, aplica esas opciones desde su consola administrativa y verifica **Enable Passkeys**, **WebAuthn Passwordless**, y la acción **WebAuthn Register Passwordless** antes de continuar. No reemplaces un realm con cuentas reales.
+
+`npm run test:oidc` verifica por defecto UPDATE_PROFILE y la preparación de passkeys, además de la regresión existente. Usa las variables de base de prueba y puerto descritas abajo. Comprueba el botón de acceso con passkey servido por Keycloak y los parámetros reales de la página de registro; cancela antes de invocar un autenticador. Esto no registra una credencial ni prueba Windows Hello. `STRUCHKAI_TEST_UPDATE_PROFILE=false` permite omitir este bloque al diagnosticar un realm antiguo; una ejecución con ese valor no acredita estas verificaciones.
+
+Para UPDATE_PROFILE, el ensayo pide `kc_action=UPDATE_PROFILE` en la autorización de una cuenta ficticia, envía un nombre obligatorio vacío al servidor, comprueba el error, guarda nombres válidos y consulta UserInfo. Cierra la sesión y abre la acción otra vez para comprobar persistencia. Cancela la edición y comprueba el retorno autenticado a Electron con el mismo `profileId`. Cancelar esta acción opcional conserva el acceso autenticado; no equivale a cancelar el acceso OIDC desde Electron. Los nombres de Keycloak y el nombre local de StruchKai son datos separados; esta fase no incorpora sincronización del nombre local.
+
+Para cerrar la prueba física, completa los pasos 1–5 anteriores y registra estas evidencias sin incluir PIN, OTP, tokens, claves ni códigos de recuperación:
+
+1. Antes del registro, anota el correo ficticio y el `profileId` que devuelve `/v1/account` en el entorno local. No copies el bearer a capturas o informes.
+2. Registra con **Este dispositivo / Windows Hello** y confirma el PIN o la biometría. Anota el nombre visible de la credencial y el resultado del registro.
+3. Cierra ambas sesiones; entra desde Electron con la passkey. Comprueba el mismo correo y `profileId`, y que la biblioteca del perfil se conserva.
+4. Elimina esa credencial desde Keycloak. Cierra ambas sesiones e intenta usarla otra vez. No basta una sesión SSO aún abierta: comprueba que el intento nuevo con la credencial eliminada no autentica. Si Windows conserva la entrada, el servidor debe rechazarla; si ya no aparece, anota que el selector no permite presentarla y deja pendiente el rechazo explícito hasta poder presentar la credencial revocada.
+5. Elige **Try another way / Probar de otra manera** o vuelve al formulario con contraseña. Entra con contraseña y un TOTP actual y confirma el mismo perfil. No elimines el TOTP al borrar la passkey.
+6. Anota fecha, versión de Windows/Edge/Keycloak y aprobado o error de cada paso. Con esa evidencia podrá cerrarse la Fase D; hasta entonces sigue pendiente la prueba física.
+
 ## Realm aislado para recuperación MFA
 
 Genera la configuración de prueba con node tests/e2e/fixtures/keycloak-realm.mjs y guárdala como struchkai-d2-realm.json en el directorio data/import de una instancia Keycloak de prueba. Usa almacenamiento nuevo y un listener en 127.0.0.1:8082. Conserva separado el realm de desarrollo. Configura STRUCHKAI_TEST_KEYCLOAK_PORT=8082 y STRUCHKAI_TEST_MFA_CODES=true antes de npm run test:oidc. El SMTP se limita a example.test. El ensayo conserva los códigos en memoria y comprueba generación, consumo, rechazo de reutilización, regeneración, invalidez del juego anterior y agotamiento.
